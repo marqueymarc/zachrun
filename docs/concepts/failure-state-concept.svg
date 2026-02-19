@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#566b88"/>
+      <stop offset="100%" stop-color="#1e2b3d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="0" y="680" width="1600" height="220" fill="#2f3f2a"/>
+  <rect x="620" y="700" width="360" height="180" fill="#3f6587"/>
+
+  <g fill="#222">
+    <polygon points="620,880 650,830 680,880"/>
+    <polygon points="680,880 710,830 740,880"/>
+    <polygon points="740,880 770,830 800,880"/>
+    <polygon points="800,880 830,830 860,880"/>
+  </g>
+
+  <ellipse cx="590" cy="840" rx="120" ry="28" fill="#ff6666" opacity="0.55"/>
+  <ellipse cx="590" cy="825" rx="55" ry="24" fill="#ff8d8d"/>
+
+  <text x="525" y="420" font-family="Verdana" font-size="96" font-weight="700" fill="#ffd7d7">SPLAT!</text>
+  <text x="455" y="510" font-family="Verdana" font-size="44" fill="#ffffff">Wah-wah-wah... Press R to retry</text>
+
+  <rect x="480" y="560" width="640" height="130" rx="18" fill="#111927" opacity="0.84"/>
+  <text x="530" y="615" font-family="Verdana" font-size="42" fill="#ffffff">Final Score: 12,480</text>
+  <text x="530" y="662" font-family="Verdana" font-size="30" fill="#ffe37a">Best Combo: x5</text>
+
+  <text x="45" y="860" font-family="Verdana" font-size="30" fill="#d6e3f4">Concept C: Failure screen with impact feedback + clear restart prompt + defeat audio cue</text>
+</svg>

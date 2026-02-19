@@ -1,0 +1,78 @@
+Original prompt: "So we want to make a game, primarily, that will be run in a browser with a wide aspect ratio but should be runnable on an iPhone in landscape orientation..."
+
+2026-02-17
+- Set up first playable prototype as static web game (canvas) in index.html/main.js/styles.css.
+- Implemented side-scrolling hazards (pit, spike, pool, spike pit), jump/dive controls, fail/splat flow, and score progression.
+- Integrated Zack photo references for expression overlays (idle/focus/victory/fail) with stylized body drawing.
+- Added synthesized moving music loop and fail "wah-wah" sound using WebAudio.
+- Exposed `window.render_game_to_text` and `window.advanceTime(ms)` for automated browser checks.
+- Ran Playwright client loop against `http://localhost:5173` and captured:
+  - `output/web-game/shot-0.png`
+  - `output/web-game/shot-1.png`
+  - `output/web-game/shot-2.png`
+  - `output/web-game/state-0.json`
+  - `output/web-game/state-1.json`
+  - `output/web-game/state-2.json`
+- Verified run state, hazard spawning, fail transition, and state text output from screenshots + JSON.
+- Upgraded character pipeline:
+  - Added isolated Zack head assets at `/assets/zack/head-neutral.png`, `/assets/zack/head-joy.png`, `/assets/zack/head-horror.png`.
+  - Remapped expression categories to `joy` (successful jump/in-air) and `horror` (fail/losing).
+  - Replaced placeholder block character with a higher-quality rigged body animation (cloak/tunic + jointed limbs + stride motion).
+- Upgraded normal gameplay music from static tones to a piano-style arpeggio loop using WebAudio note envelopes.
+- Re-ran Playwright browser checks after animation/audio rewrite and validated screenshots/state outputs.
+- Added explicit expression proof artifacts:
+  - `/output/web-game/shot-joy.png` and `/output/web-game/state-joy.json`
+  - `/output/web-game/shot-2.png` and `/output/web-game/state-2.json` for horror/fail
+- Gameplay fairness/restart pass:
+  - Added safer obstacle spacing based on speed (`computeSafeGap`) and deterministic placement using `lastHazardEndX`.
+  - Added hazard streak limits and periodic long breaks so back-to-back jumps remain possible.
+  - Added end-of-run condition (`TARGET_SCORE`) with restart flow and overlay.
+  - Added restart shortcuts after fail/end: `R`, `Enter`, or Start button.
+  - Updated fail/end overlay messaging accordingly.
+- Background update:
+  - Wired `/assets/world/far_background.png` as the constant (non-parallax) full-canvas background in `drawBackground()`.
+- Obstacle system replaced with tumbleweeds:
+  - Added `/assets/world/tumbleweed1.png` and `/assets/world/tumbleweed2.png` as the only obstacle sprites.
+  - Removed pit/pool/spike obstacle spawning and collision; now hazards are rolling tumbleweeds requiring jump timing.
+  - Implemented alpha-based sprite center detection and center-pivot rotation so tumbleweeds roll around visual center.
+  - Added tumbleweed metadata to `render_game_to_text` including width and rotation.
+
+TODO
+- Add dedicated swim and climb gameplay segments (first version currently has run/jump + pool interaction).
+- Build true sprite-sheet pipeline for Zack body frames with cleaner animation.
+- Tune obstacle fairness and difficulty curve with replay metrics.
+- 2026-02-18 11:31: tuned tumbleweed readability and fail reliability:
+  - increased tumbleweed scale/radius
+  - added dark backing + stronger shadow
+  - render tumbleweeds in front of Zack
+  - delayed first hazard + increased safe gaps
+  - collision only active after obstacle is visibly on-screen for ~0.45s
+  - added frame loop try/catch fallback to avoid silent animation freeze
+  - validated via Playwright snapshots: shot-1 shows clearly visible tumbleweed ahead of player
+- 2026-02-18 11:44: hardened no-jump failure path
+  - guaranteed earlier first tumbleweed spawn window
+  - added fallback procedural tumbleweed hazard when image metrics are unavailable
+  - added grounded overlap collision fallback (prevents pass-through on narrow alpha edges)
+  - validated no-input run: mode switches to failed around score ~3000 with visible tumbleweed
+- 2026-02-18 12:15: gameplay + hazard polish pass
+  - removed auto-victory flow (no finish at target score; run ends only on loss)
+  - added tumbleweed bobbing tied to rotation and synced shadow bobbing
+  - removed top Build/Bill line from HUD, kept bottom-right diagnostics
+  - bumped build id to 2026-02-18-1212 and cache-busting query params to 1212
+- 2026-02-19 11:43: autoplay + camera behavior polish
+  - Best score no longer updates when `autoPlay` is enabled (applies on fail and finish paths).
+  - Camera transition targets now pause while Zack is airborne and for a short landing lock period, preventing jump/landing scenery drift.
+  - Added headway pan cycle: camera lets Zack drift right periodically, then eases back left more slowly over time.
+  - Bumped build id to `2026-02-19-1143` and cache-busting query params to `20260219-1143`.
+  - Verified with Playwright web-game client run (no new console/page errors emitted).
+- 2026-02-19 12:41: snake motion + autoplay + camera/drift tuning
+  - Snake strike no longer shifts world X; strike animation now center-anchored so snakes keep moving while striking.
+  - Snake death pose now rotates counterclockwise (left-facing head angles downward), and killer snake continues periodic strike pulses after Zack dies.
+  - Added floor-pose right shift (+10px) so Zack stays fully in frame when lying down.
+  - Added `sceneTime` so far/near/cloud scenery scroll can freeze while Zack is airborne (jumping), while hazards continue.
+  - Reduced background tile seams by trimming source edges and increasing overlap; strengthened seam blur blend.
+  - Added larger Zack lateral drift cycle during running (moves right then drifts left over time).
+  - Increased camera zoom/pan motion amplitude and pacing for more dynamic feel.
+  - Strengthened autoplay timing with larger snake-safe jump window plus collision rescue cooldown to keep autoplay reliable despite zoom/pan + drift.
+  - Build/version bumped to `2026-02-19-1241`; cache bust query updated to `20260219-1241`.
+  - Live check: autoplay remained `mode=running` after 8s at high speed with active hazards (no fail).
