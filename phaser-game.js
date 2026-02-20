@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2160";
+  const BUILD_ID = "2026-02-20-2162";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -1606,6 +1606,7 @@
         failSwoopEnabled: Math.random() < 0.52,
         failPeckTimer: 0,
         failDiveTimer: 0,
+        failLaunchBoost: 0,
         failCruiseYBase: yBase,
         baseScale: scale,
         sprite,
@@ -2151,13 +2152,20 @@
         h.yBase += (peckTargetY - h.yBase) * Math.min(1, dt * 9.4);
         h.flap += dt * 12.2;
         h.failPeckTimer = Math.max(0, (h.failPeckTimer || 0) - dt);
-        if (h.failPeckTimer <= 0) h.failSwoopPhase = "climb";
+        if (h.failPeckTimer <= 0) {
+          h.failSwoopPhase = "climb";
+          h.failLaunchBoost = 0.42;
+        }
         return;
       }
 
       h.failSwoopPhase = "climb";
-      h.x -= Math.max(110, state.speed * 0.88 * (h.speedMul || 1)) * dt;
-      h.yBase += (h.failCruiseYBase - h.yBase) * Math.min(1, dt * 2.4);
+      const launchBoost = Math.max(0, h.failLaunchBoost || 0);
+      h.failLaunchBoost = launchBoost > 0 ? Math.max(0, launchBoost - dt) : 0;
+      const climbSpeedMul = launchBoost > 0 ? 1.28 : 1;
+      const climbEase = launchBoost > 0 ? 5.4 : 2.6;
+      h.x -= Math.max(110, state.speed * 0.88 * (h.speedMul || 1) * climbSpeedMul) * dt;
+      h.yBase += (h.failCruiseYBase - h.yBase) * Math.min(1, dt * climbEase);
       h.flap += dt * 9;
     }
 
@@ -2180,9 +2188,10 @@
       hazard.speedMul = mustPeckFirstPass ? 0.78 : 0.92 + Math.random() * 0.22;
       hazard.failSwoopPhase = mustPeckFirstPass ? "dive" : "";
       hazard.failSwoopDone = false;
-      hazard.failSwoopEnabled = mustPeckFirstPass || Math.random() < 0.5;
+      hazard.failSwoopEnabled = mustPeckFirstPass || Math.random() < 0.3;
       hazard.failPeckTimer = 0;
       hazard.failDiveTimer = mustPeckFirstPass ? 0.55 : 0;
+      hazard.failLaunchBoost = 0;
       state.failEaglePassCount += 1;
       this.positionHazardVisual(hazard, deltaX);
       state.hazards.push(hazard);
