@@ -159,3 +159,40 @@ TODO
   - Verified via local run against `http://127.0.0.1:5173`:
     - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173`
     - artifacts in `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-20T20-00-35-971Z`
+- 2026-02-20 20:08: snake shadow/depth/icon polish
+  - Removed extra ellipse shadow from snake hazards; snake now uses only its baked sprite shadow/transparency.
+  - Increased hazard layering so obstacle bodies/shadows render above Zack death pose (`HAZARD_BODY_DEPTH`, `HAZARD_SHADOW_DEPTH`).
+  - Updated failed-state snake behavior: non-killer snakes that pass dead Zack now pause for a bite, then continue moving left.
+  - Added body shudder/jolt on each failed-state snake bite (including passer bites).
+  - Added generated app icons and favicon from Zack assets:
+    - `/Users/marc/src/zachgame1/assets/icons/favicon.ico`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-192.png`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-512.png`
+  - Added web app manifest `/Users/marc/src/zachgame1/site.webmanifest` and linked favicon/manifest tags in `/Users/marc/src/zachgame1/index.html`.
+  - Build/cache bump: `2026-02-20-2010` / `20260220-2010`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - artifacts: /Users/marc/src/zachgame1/output/playwright-tests-2026-02-20T20-08-37-179Z
+- 2026-02-20 20:22: combo jump + giant tumbleweed + iPhone interaction polish
+  - Added crouch-then-jump combo move: if crouch is followed immediately by jump, Zack performs a much higher jump.
+  - Added occasional giant tumbleweeds (`requiresHighJump`) that need the combo jump clearance.
+  - Added deterministic test for combo jump height + big tumbleweed spawn in `/Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`.
+  - Updated mobile interaction behavior:
+    - Added double-tap on either side to toggle autoplay.
+    - Added mobile immersive attempt on run start (fullscreen + landscape lock where supported).
+    - Added rotate overlay for portrait orientation on iPhone/touch devices.
+    - Added explicit audio unlock/resume on touch/pointer/mouse gestures to improve iPhone music start reliability.
+  - Updated snake fail behavior: passing snakes pause to bite dead Zack, then continue left; bite triggers body shudder.
+  - Removed extra synthetic snake shadow and retained baked sprite shadow/transparency.
+  - Added favicon + webapp icons and manifest:
+    - `/Users/marc/src/zachgame1/assets/icons/favicon.ico`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-192.png`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-512.png`
+    - `/Users/marc/src/zachgame1/site.webmanifest`
+  - Build/cache bump: `2026-02-20-2032` / `20260220-2032`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)

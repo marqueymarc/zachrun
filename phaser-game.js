@@ -12,8 +12,11 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-1948";
+  const BUILD_ID = "2026-02-20-2032";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
+  const DOUBLE_TAP_WINDOW_MS = 280;
+  const HAZARD_SHADOW_DEPTH = 168;
+  const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
   const CAMERA_BASE_SCREEN_X = WORLD_W * 0.27;
   const CAMERA_HEADWAY_SCREEN_X = WORLD_W * 0.4;
@@ -91,6 +94,8 @@
       driftTargetX: PLAYER_BASE_X,
       driftTimer: 1.8,
       driftRightPhase: true,
+      crouchComboTimer: 0,
+      comboJumpActive: false,
       deathJoltOffset: 0,
       deathJoltVelocity: 0,
     },
@@ -377,7 +382,7 @@
               ? this.createSnakeHazard()
               : hazardType === "eagle"
                 ? this.createEagleHazard()
-                : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0);
+                : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0, Boolean(options.big));
 
           const targetX = Number.isFinite(options.x) ? options.x : state.player.x + 500;
           const deltaX = targetX - h.x;
@@ -669,6 +674,7 @@
       this.hudAutoEl = document.getElementById("hud-auto");
       this.hudBuildEl = document.getElementById("hud-build");
       this.touchGuideEl = document.getElementById("touch-guide");
+      this.rotateOverlayEl = document.getElementById("rotate-overlay");
       this.gameWrapEl = document.getElementById("game-wrap");
       if (this.hudBuildEl) this.hudBuildEl.textContent = `Build ${BUILD_ID}`;
 
@@ -711,8 +717,44 @@
 
     }
 
+    toggleAutoPlay() {
+      state.autoPlay = !state.autoPlay;
+      setStatus(state.autoPlay ? "Autoplay ON (P toggles)." : "Autoplay OFF.");
+      this.refreshHud();
+    }
+
+    async unlockAudioFromGesture() {
+      activateAudio();
+      if (!state.audioCtx) return;
+      if (state.audioCtx.state === "suspended") {
+        try {
+          await state.audioCtx.resume();
+        } catch (_error) {
+          // iOS can reject resume until the next trusted gesture.
+        }
+      }
+    }
+
+    async enterMobileImmersive() {
+      if (!IS_TOUCH_FULLSCREEN) return;
+      if (!document.fullscreenElement && !this.scale.isFullscreen) {
+        try {
+          if (this.scale.fullscreen?.available) this.scale.startFullscreen();
+          else if (this.gameWrapEl?.requestFullscreen) await this.gameWrapEl.requestFullscreen();
+        } catch (_error) {
+          // iOS Safari can reject fullscreen requests; keep gameplay running.
+        }
+      }
+      try {
+        if (screen.orientation?.lock) await screen.orientation.lock("landscape");
+      } catch (_error) {
+        // Ignore orientation lock failures on unsupported browsers.
+      }
+    }
+
     bindInput() {
       this.activeTouchSides = new Map();
+      this.lastTapAtBySide = { left: -999999, right: -999999 };
       this.sideFromClientX = (clientX) => {
         const rect = this.gameWrapEl?.getBoundingClientRect();
         if (!rect || rect.width <= 0) return clientX >= window.innerWidth * 0.5 ? "right" : "left";
@@ -753,8 +795,7 @@
       });
 
       this.input.keyboard.on("keydown-P", () => {
-        state.autoPlay = !state.autoPlay;
-        setStatus(state.autoPlay ? "Autoplay ON (P toggles)." : "Autoplay OFF.");
+        this.toggleAutoPlay();
       });
 
       this.input.keyboard.on("keydown-F", () => {
@@ -781,6 +822,15 @@
 
       this.wrapPointerDown = (event) => {
         event.preventDefault();
+        this.unlockAudioFromGesture();
+        const side = this.sideFromClientX(event.clientX);
+        const now = performance.now();
+        if (now - this.lastTapAtBySide[side] <= DOUBLE_TAP_WINDOW_MS) {
+          this.lastTapAtBySide[side] = -999999;
+          this.toggleAutoPlay();
+          return;
+        }
+        this.lastTapAtBySide[side] = now;
         if (state.mode !== "running") {
           this.startOrRestartRun();
           return;
@@ -802,11 +852,16 @@
 
       if (this.gameWrapEl) {
         this.gameWrapEl.style.touchAction = "none";
+        this.wrapGestureUnlock = () => {
+          this.unlockAudioFromGesture();
+        };
         this.gameWrapEl.addEventListener("pointerdown", this.wrapPointerDown, { passive: false });
         this.gameWrapEl.addEventListener("pointermove", this.wrapPointerMove, { passive: false });
         this.gameWrapEl.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
         this.gameWrapEl.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
         this.gameWrapEl.addEventListener("pointerleave", this.wrapPointerUp, { passive: true });
+        this.gameWrapEl.addEventListener("touchstart", this.wrapGestureUnlock, { passive: true });
+        this.gameWrapEl.addEventListener("mousedown", this.wrapGestureUnlock, { passive: true });
       }
       window.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
       window.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
@@ -818,6 +873,8 @@
           this.gameWrapEl.removeEventListener("pointerup", this.wrapPointerUp);
           this.gameWrapEl.removeEventListener("pointercancel", this.wrapPointerUp);
           this.gameWrapEl.removeEventListener("pointerleave", this.wrapPointerUp);
+          this.gameWrapEl.removeEventListener("touchstart", this.wrapGestureUnlock);
+          this.gameWrapEl.removeEventListener("mousedown", this.wrapGestureUnlock);
         }
         window.removeEventListener("pointerup", this.wrapPointerUp);
         window.removeEventListener("pointercancel", this.wrapPointerUp);
@@ -852,6 +909,8 @@
             onGround: p.onGround,
             inWater: p.inWater,
             expressionCategory: p.expression,
+            highJumpReady: p.crouchComboTimer > 0.02,
+            comboJumpActive: p.comboJumpActive,
             deathJoltOffset: Number((p.deathJoltOffset || 0).toFixed(2)),
           },
           speed: Math.round(state.speed),
@@ -888,8 +947,8 @@
     }
 
     async startOrRestartRun() {
-      activateAudio();
-      if (state.audioCtx?.state === "suspended") await state.audioCtx.resume();
+      await this.unlockAudioFromGesture();
+      await this.enterMobileImmersive();
       this.resetGame();
       startMusic();
     }
@@ -945,6 +1004,8 @@
       p.driftTargetX = PLAYER_BASE_X;
       p.driftTimer = 1.8 + Math.random() * 0.9;
       p.driftRightPhase = true;
+      p.crouchComboTimer = 0;
+      p.comboJumpActive = false;
       p.deathJoltOffset = 0;
       p.deathJoltVelocity = 0;
       input.touchLeftCount = 0;
@@ -1146,23 +1207,34 @@
       return false;
     }
 
-    createTumbleweedHazard(useFirst) {
+    createTumbleweedHazard(useFirst, forceBig = false) {
       const key = useFirst ? "tumble1" : "tumble2";
       const tex = this.textures.get(key).getSourceImage();
       const sizeRamp = Math.min(0.18, state.time / 95);
-      const scale = (0.54 + Math.random() * 0.42) * (1 + sizeRamp);
+      const isBig = forceBig || (!state.autoPlay && state.hazardsSpawned > 4 && Math.random() < 0.16);
+      const sizeBoost = isBig ? 1.5 + Math.random() * 0.18 : 1;
+      const scale = (0.54 + Math.random() * 0.42) * (1 + sizeRamp) * sizeBoost;
       const visibleW = tex.width * scale;
       const visibleH = tex.height * scale;
       const x = WORLD_W + 120;
       const yFloor = FLOOR_Y - 26 + Math.random() * 40;
 
-      const mulSprite = this.add.image(x + visibleW * 0.5, yFloor - visibleH * 0.5, key).setScale(scale).setBlendMode(Phaser.BlendModes.MULTIPLY).setAlpha(0.58);
-      const sprite = this.add.image(x + visibleW * 0.5, yFloor - visibleH * 0.5, key).setScale(scale).setAlpha(0.85);
-      const shadow = this.add.ellipse(x + visibleW * 0.5, FLOOR_Y + 18, Math.max(22, visibleW * 0.22) * 2, 16, 0x14100c, 0.26);
+      const mulSprite = this.add
+        .image(x + visibleW * 0.5, yFloor - visibleH * 0.5, key)
+        .setScale(scale)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.58)
+        .setDepth(HAZARD_BODY_DEPTH - 1);
+      const sprite = this.add.image(x + visibleW * 0.5, yFloor - visibleH * 0.5, key).setScale(scale).setAlpha(0.85).setDepth(HAZARD_BODY_DEPTH);
+      const shadow = this.add
+        .ellipse(x + visibleW * 0.5, FLOOR_Y + 18, Math.max(22, visibleW * 0.22) * 2, 16, 0x14100c, 0.26)
+        .setDepth(HAZARD_SHADOW_DEPTH);
 
       return {
         id: ++state.hazardIdSeq,
         type: "tumbleweed",
+        isBig,
+        requiresHighJump: isBig,
         key,
         x,
         yFloor,
@@ -1189,8 +1261,7 @@
       const x = WORLD_W + 120;
       const yFloor = FLOOR_Y + 4;
 
-      const sprite = this.add.image(x + visibleW * 0.5, yFloor - visibleH * 0.5, "snakeSide").setScale(scale);
-      const shadow = this.add.ellipse(x + visibleW * 0.5, FLOOR_Y + 10, Math.max(18, visibleW * 0.34) * 2, 20, 0x14100c, 0.32);
+      const sprite = this.add.image(x + visibleW * 0.5, yFloor - visibleH * 0.5, "snakeSide").setScale(scale).setAlpha(0.98).setDepth(HAZARD_BODY_DEPTH);
 
       return {
         id: ++state.hazardIdSeq,
@@ -1216,7 +1287,7 @@
         flipX: false,
         isFailKiller: false,
         sprite,
-        shadow,
+        shadow: null,
         baseScale: scale,
       };
     }
@@ -1234,8 +1305,9 @@
         .setScale(scale * 0.64)
         .setBlendMode(Phaser.BlendModes.MULTIPLY)
         .setAlpha(0.48)
-        .setTint(0x101010);
-      const sprite = this.add.image(x + visibleW * 0.5, yBase, "eagle1").setScale(scale).setAlpha(0.94);
+        .setTint(0x101010)
+        .setDepth(HAZARD_SHADOW_DEPTH);
+      const sprite = this.add.image(x + visibleW * 0.5, yBase, "eagle1").setScale(scale).setAlpha(0.94).setDepth(HAZARD_BODY_DEPTH);
 
       return {
         id: ++state.hazardIdSeq,
@@ -1301,7 +1373,7 @@
     positionHazardVisual(h, deltaX = 0) {
       if (h.type === "snake") {
         h.sprite.x += deltaX;
-        h.shadow.x += deltaX;
+        if (h.shadow) h.shadow.x += deltaX;
       } else if (h.type === "eagle") {
         h.sprite.x += deltaX;
         h.shadow.x += deltaX;
@@ -1339,9 +1411,6 @@
         h.sprite.setDisplaySize(drawW, drawH);
         h.sprite.setFlipX(Boolean(h.flipX));
         h.sprite.setRotation(angle);
-
-        h.shadow.setPosition(centerX, FLOOR_Y + 10);
-        h.shadow.width = Math.max(18, drawW * 0.34) * 2;
       } else if (h.type === "eagle") {
         const flap = Math.sin(h.flap || 0);
         const travel = (h.enteredAt === null ? 0 : state.time - h.enteredAt) * (h.speedMul || 1);
@@ -1516,7 +1585,7 @@
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (250 * 1.08) * 0.5 + 12;
         const splatX = clamp(p.x - 34 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(splatX + 10, FLOOR_Y + 16);
+        this.playerSprite.setPosition(splatX + 10, FLOOR_Y + 16 + p.deathJoltOffset);
         this.playerSprite.setRotation(deathRotation);
         this.playerSprite.setScale(normalizedScaleX * 0.9 * deathScaleX, normalizedScaleY * 0.9 * deathScaleY);
         this.playerSplatBig.setPosition(splatX + 8, FLOOR_Y + 20);
@@ -1548,7 +1617,7 @@
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (258 * 1.04) * 0.5 + 12;
         const lieX = clamp(p.x - 16 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16);
+        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16 + p.deathJoltOffset);
         this.playerSprite.setRotation(deathRotation);
         this.playerSprite.setScale(normalizedScaleX * 0.9 * deathScaleX, normalizedScaleY * 0.92 * deathScaleY);
         this.playerSplatBig.setPosition(lieX + 10, FLOOR_Y + 20);
@@ -1610,11 +1679,11 @@
       if (showFail) {
         this.failTitle.setText("SPLAT");
         this.failDetail.setText(`Cause: ${state.failReason}`);
-        this.failHint.setText("Tap anywhere to run again. Keyboard: R or Enter.");
+        this.failHint.setText("Tap anywhere to run again. Double-tap left/right toggles AUTO.");
       } else if (showMenu) {
         this.failTitle.setText("ZACK RUN");
         this.failDetail.setText("Single tap anywhere to start.");
-        this.failHint.setText("Touch right: jump. Touch left: duck/dive.");
+        this.failHint.setText("Touch right: jump. Touch left: duck/dive. Double-tap either side: AUTO.");
       }
       const showTouchGuide = showMenu || (state.mode === "running" && state.time < TOUCH_GUIDE_HIDE_SECONDS);
       if (this.touchGuideEl) this.touchGuideEl.style.display = showTouchGuide ? "flex" : "none";
@@ -1646,8 +1715,8 @@
         h.isStriking = true;
         h.strikeTimer = 0.32;
         h.strikePause = 0.68 + Math.random() * 0.42;
-        if (state.mode === "failed" && state.failReason === "killed by a snake bite" && h.isFailKiller) {
-          this.triggerPlayerDeathJolt(1);
+        if (state.mode === "failed") {
+          this.triggerPlayerDeathJolt(h.isFailKiller ? 1 : 0.72);
         }
       }
       if (h.isStriking) {
@@ -1660,6 +1729,37 @@
           if (h.postFailBites > 0) h.postFailBites -= 1;
         }
       } else {
+        h.strikePhase = 0;
+      }
+    }
+
+    updateSnakeFailPasser(h, dt) {
+      const biteX = state.player.x - h.visibleW * 0.36;
+      if (!h.postFailPhase && h.x <= biteX + 90) {
+        h.postFailPhase = "bite-pass";
+        h.postFailBites = 1;
+        h.strikePause = 0.03;
+        h.isStriking = false;
+        h.strikePhase = 0;
+        h.flipX = false;
+      }
+
+      if (h.postFailPhase === "bite-pass") {
+        h.x += (biteX - h.x) * Math.min(1, dt * 8.8);
+        h.deathPose = true;
+        h.flipX = false;
+        this.advanceSnakeStrike(h, dt);
+        if (h.postFailBites <= 0) {
+          h.postFailPhase = "resume-left";
+          h.isStriking = false;
+          h.strikePhase = 0;
+          h.deathPose = false;
+        }
+      } else {
+        h.x -= state.speed * (h.speedMul || 1) * dt;
+        h.deathPose = false;
+        h.flipX = false;
+        h.isStriking = false;
         h.strikePhase = 0;
       }
     }
@@ -1751,7 +1851,7 @@
 
         if (state.mode !== "running") {
           if (state.mode === "failed") {
-            if (state.failReason === "killed by a snake bite") {
+            {
               const p = state.player;
               p.deathJoltVelocity -= 960 * dt;
               p.deathJoltOffset -= p.deathJoltVelocity * dt;
@@ -1762,9 +1862,6 @@
                 p.deathJoltOffset = -18;
                 p.deathJoltVelocity *= -0.34;
               }
-            } else {
-              state.player.deathJoltOffset = 0;
-              state.player.deathJoltVelocity = 0;
             }
 
             for (const c of state.clouds) {
@@ -1798,7 +1895,7 @@
                 h.flap += dt * 9.2;
                 if (h.hitDrop > 0) h.hitDrop = Math.max(0, h.hitDrop - dt * 6);
               } else if (h.type === "snake") {
-                h.x -= state.speed * (h.speedMul || 1) * dt;
+                this.updateSnakeFailPasser(h, dt);
               }
               this.updateHazardVisual(h);
             }
@@ -1836,12 +1933,19 @@
           input.diveHeld = input.diveHeld || this.shouldAutoDuck();
         }
 
+        if (p.onGround && input.diveHeld) p.crouchComboTimer = 0.24;
+        else p.crouchComboTimer = Math.max(0, p.crouchComboTimer - dt);
+        p.duck = p.onGround && input.diveHeld;
+
         if (input.jumpPressed && p.onGround) {
-          p.vy = state.autoPlay ? -1160 : -980;
+          const comboJump = !state.autoPlay && p.crouchComboTimer > 0.02;
+          p.vy = comboJump ? -1380 : state.autoPlay ? -1160 : -980;
           p.onGround = false;
           p.airSprite = Math.random() < AIR_JOY_CHANCE ? "joy" : "jump";
           p.flipActive = false;
           p.flipProgress = 0;
+          p.comboJumpActive = comboJump;
+          p.crouchComboTimer = 0;
 
           const nextHazard = state.hazards.find((h) => h.x > p.x && h.x - p.x < 420);
           const largeHazard = Boolean(nextHazard && (nextHazard.visibleW > 150 || nextHazard.visibleH > 95));
@@ -1858,7 +1962,6 @@
           }
         }
         input.jumpPressed = false;
-        p.duck = p.onGround && input.diveHeld;
 
         if (input.diveHeld && !p.onGround && p.vy > -60) p.vy += 820 * dt;
 
@@ -1870,6 +1973,7 @@
           p.onGround = true;
           p.flipActive = false;
           p.flipProgress = 0;
+          p.comboJumpActive = false;
         } else {
           p.onGround = false;
           if (p.flipActive) {
@@ -1939,7 +2043,8 @@
           const bodyRight = p.x + p.width * 0.23;
           const hazardX = h.x;
           const overlapX = hazardX < bodyRight && hazardX + h.visibleW > bodyLeft;
-          const jumpedClear = p.y < FLOOR_Y - (state.autoPlay ? 48 : 56);
+          const neededClearance = h.type === "tumbleweed" && h.requiresHighJump ? 212 : state.autoPlay ? 48 : 56;
+          const jumpedClear = p.y < FLOOR_Y - neededClearance;
 
           if (h.type === "eagle") {
             const eagleUnsafe = overlapX && !p.duck && p.onGround;

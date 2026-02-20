@@ -120,6 +120,22 @@ async function scenarioTouchHolds({ page }) {
   await page.evaluate(() => window.__zackTest.setTouches({ left: 0, right: 0 }));
 }
 
+async function scenarioDoubleTapAutoplay({ page }) {
+  await page.evaluate(() => window.__zackTest.resetRun({ autoPlay: false }));
+  await waitForMode(page, "running");
+  const vp = page.viewportSize();
+
+  await page.mouse.dblclick(Math.round(vp.width * 0.78), Math.round(vp.height * 0.62), { delay: 45 });
+  await page.waitForTimeout(60);
+  let autoPlay = await page.evaluate(() => window.__zackTest.getState().autoPlay);
+  assert.equal(autoPlay, true, "double-tap on right side should enable autoplay");
+
+  await page.mouse.dblclick(Math.round(vp.width * 0.22), Math.round(vp.height * 0.62), { delay: 45 });
+  await page.waitForTimeout(60);
+  autoPlay = await page.evaluate(() => window.__zackTest.getState().autoPlay);
+  assert.equal(autoPlay, false, "double-tap on left side should disable autoplay");
+}
+
 async function scenarioHazardQueue({ page, scenarioDir }) {
   const spawned = await page.evaluate(() => {
     window.__zackTest.resetRun();
@@ -134,6 +150,51 @@ async function scenarioHazardQueue({ page, scenarioDir }) {
   const types = spawned.map((h) => h?.type || null);
   assert.deepEqual(types, ["snake", "eagle", "tumbleweed"], "queued hazards should spawn in requested order");
   await fs.writeFile(path.join(scenarioDir, "spawned.json"), JSON.stringify(spawned, null, 2));
+}
+
+async function scenarioComboJumpAndBigTumbleweed({ page, scenarioDir }) {
+  const normalJumpMinY = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    let minY = window.__zackTest.getState().player.y;
+    await window.__zackTest.tap("right");
+    for (let i = 0; i < 70; i += 1) {
+      await window.__zackTest.step(16);
+      minY = Math.min(minY, window.__zackTest.getState().player.y);
+    }
+    return minY;
+  });
+
+  const comboJumpMinY = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.setTouches({ left: 1, right: 0 });
+    await window.__zackTest.step(70);
+    window.__zackTest.setTouches({ left: 0, right: 0 });
+    await window.__zackTest.tap("right");
+    let minY = window.__zackTest.getState().player.y;
+    for (let i = 0; i < 70; i += 1) {
+      await window.__zackTest.step(16);
+      minY = Math.min(minY, window.__zackTest.getState().player.y);
+    }
+    return minY;
+  });
+
+  assert.ok(
+    comboJumpMinY < normalJumpMinY - 45,
+    `expected combo jump to be higher (normal minY=${normalJumpMinY}, combo minY=${comboJumpMinY})`
+  );
+
+  const big = await page.evaluate(() => {
+    window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.spawnHazard("tumbleweed", { big: true, x: 1050 });
+    return window.__zackTest.getState().hazards[0];
+  });
+  assert.ok((big?.w || 0) >= 230, `expected big tumbleweed width to be large, got ${big?.w || 0}`);
+
+  await fs.writeFile(
+    path.join(scenarioDir, "combo-jump.json"),
+    JSON.stringify({ normalJumpMinY, comboJumpMinY, bigHazard: big }, null, 2)
+  );
 }
 
 async function scenarioSnakeFailSequence({ page, scenarioDir }) {
@@ -192,7 +253,9 @@ async function main() {
       ["tap-start-restart", scenarioTapStartRestart],
       ["touch-guide-hide", scenarioTouchGuideHides],
       ["touch-holds", scenarioTouchHolds],
+      ["double-tap-autoplay", scenarioDoubleTapAutoplay],
       ["hazard-queue", scenarioHazardQueue],
+      ["combo-jump-big-tumbleweed", scenarioComboJumpAndBigTumbleweed],
       ["snake-fail-sequence", scenarioSnakeFailSequence],
     ];
 

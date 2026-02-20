@@ -4,8 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Zack Run</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260220-1948" />
+    <link rel="icon" type="image/x-icon" href="./assets/icons/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="./assets/icons/icon-192.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <link rel="stylesheet" href="./styles.css?v=20260220-2032" />
   </head>
   <body class="game-page">
     <section id="game-wrap" class="game-wrap" aria-label="Zack side scroller game area">
@@ -17,12 +21,17 @@
       </div>
       <div id="hud-build" class="hud-build" aria-hidden="true"></div>
       <div id="touch-guide" class="touch-guide" aria-hidden="true">
-        <div class="touch-chip">Right Touch: Jump / Hold Higher</div>
+        <div class="touch-chip">Right Touch: Jump</div>
         <div class="touch-chip">Left Touch: Duck / Dive</div>
+      </div>
+      <div id="rotate-overlay" class="rotate-overlay" aria-hidden="true">
+        <div class="rotate-overlay-card">
+          Rotate to landscape for full screen play.
+        </div>
       </div>
     </section>
     <p id="status-text" class="hidden-control" aria-live="polite"></p>
     <script src="./vendor/phaser.min.js?v=3.90.0"></script>
-    <script src="./phaser-game.js?v=20260220-1948"></script>
+    <script src="./phaser-game.js?v=20260220-2032"></script>
   </body>
 </html>
