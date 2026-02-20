@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2149";
+  const BUILD_ID = "2026-02-20-2155";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -766,7 +766,15 @@
       setSoundMuted(state.soundMuted, true);
       this.refreshSoundToggle();
       if (this.soundToggleEl) {
+        this.skipNextSoundClick = false;
         this.soundToggleHandler = (ev) => {
+          if (ev.type === "click" && this.skipNextSoundClick) {
+            this.skipNextSoundClick = false;
+            return;
+          }
+          if (ev.type === "pointerdown") {
+            this.skipNextSoundClick = true;
+          }
           ev.preventDefault();
           ev.stopPropagation();
           this.unlockAudioFromGesture();
@@ -828,7 +836,17 @@
 
     refreshSoundToggle() {
       if (!this.soundToggleEl) return;
-      this.soundToggleEl.textContent = state.soundMuted ? "🔇" : "🔊";
+      this.soundToggleEl.innerHTML = state.soundMuted
+        ? `<svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 10h4l5-4v12l-5-4H3z"></path>
+            <path d="M16 9l5 6"></path>
+            <path d="M21 9l-5 6"></path>
+          </svg>`
+        : `<svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 10h4l5-4v12l-5-4H3z"></path>
+            <path d="M16 9.5c1.4 1 1.4 4 0 5"></path>
+            <path d="M18.8 7c3.2 2.3 3.2 7.7 0 10"></path>
+          </svg>`;
       this.soundToggleEl.setAttribute("aria-label", state.soundMuted ? "Unmute sound" : "Mute sound");
       this.soundToggleEl.classList.toggle("is-muted", state.soundMuted);
     }
