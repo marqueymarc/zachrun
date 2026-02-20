@@ -5,6 +5,8 @@
   const WORLD_W = 1920;
   const WORLD_H = 864;
   const IS_TOUCH_FULLSCREEN = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  const IS_STANDALONE_APP =
+    window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   const TEST_MODE = urlParams.get("test") === "1";
   const FLOOR_Y = 655;
   const GRAVITY = 2500;
@@ -12,13 +14,13 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2038";
+  const BUILD_ID = "2026-02-20-2054";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const COMBO_JUMP_WINDOW_SECONDS = 0.45;
   const NORMAL_JUMP_VELOCITY = -980;
   const AUTO_JUMP_VELOCITY = -1160;
-  const COMBO_JUMP_VELOCITY = -1520;
+  const COMBO_JUMP_VELOCITY = -1420;
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -115,6 +117,7 @@
     musicTimerId: null,
     musicPattern: [64, 67, 71, 67, 62, 66, 69, 66],
     musicStep: 0,
+    audioPrimed: false,
     autoDebug: {
       enabled: true,
       lastLogAt: -999,
@@ -205,6 +208,24 @@
     musicGain.gain.value = 0.14;
     musicGain.connect(ac.destination);
     state.musicGain = musicGain;
+  }
+
+  function primeAudioContext() {
+    if (!state.audioCtx || state.audioPrimed) return;
+    try {
+      const ac = state.audioCtx;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      gain.gain.value = 0.00001;
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.frequency.value = 440;
+      osc.start(ac.currentTime);
+      osc.stop(ac.currentTime + 0.02);
+      state.audioPrimed = true;
+    } catch (_error) {
+      // Retry on next gesture if priming failed.
+    }
   }
 
   function startMusic() {
@@ -680,8 +701,12 @@
       this.hudBuildEl = document.getElementById("hud-build");
       this.touchGuideEl = document.getElementById("touch-guide");
       this.rotateOverlayEl = document.getElementById("rotate-overlay");
+      this.rotateOverlayTextEl = document.getElementById("rotate-overlay-text");
       this.gameWrapEl = document.getElementById("game-wrap");
       if (this.hudBuildEl) this.hudBuildEl.textContent = `Build ${BUILD_ID}`;
+      if (this.rotateOverlayTextEl && IS_TOUCH_FULLSCREEN && !IS_STANDALONE_APP) {
+        this.rotateOverlayTextEl.textContent = "Rotate to landscape. For true full screen, Add to Home Screen and open Zack Run from there.";
+      }
 
       this.failTitle = this.add
         .text(WORLD_W * 0.5, 250, "SPLAT", {
@@ -737,6 +762,9 @@
         } catch (_error) {
           // iOS can reject resume until the next trusted gesture.
         }
+      }
+      if (state.audioCtx.state === "running") {
+        primeAudioContext();
       }
     }
 
@@ -953,7 +981,7 @@
 
     async startOrRestartRun() {
       await this.unlockAudioFromGesture();
-      await this.enterMobileImmersive();
+      this.enterMobileImmersive();
       this.resetGame();
       startMusic();
     }

@@ -213,3 +213,22 @@ TODO
     - `node --check /Users/marc/src/zachgame1/phaser-game.js`
     - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
     - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+- 2026-02-20 20:54: iPhone fullscreen/audio hardening + tuned combo jump height
+  - Reduced combo jump height from very high while keeping clear separation from normal jump (`COMBO_JUMP_VELOCITY` now `-1420`).
+  - Added iOS web app metadata in `/Users/marc/src/zachgame1/index.html` (`apple-mobile-web-app-capable`, status bar style, title, theme color).
+  - Updated `/Users/marc/src/zachgame1/site.webmanifest` for fullscreen landscape launch intent:
+    - `display: fullscreen`
+    - `display_override: ["fullscreen", "standalone"]`
+    - `orientation: landscape`
+    - `start_url: /?source=pwa`
+  - Improved mobile audio unlock reliability:
+    - audio context prime step on successful gesture resume
+    - kept unlock path on pointer/touch/mousedown
+    - removed blocking await on mobile immersive request before starting run/music
+  - Added standalone/Home Screen guidance text in rotate overlay for touch devices not launched in standalone display mode.
+  - Build/cache bump: `2026-02-20-2054` / `20260220-2054`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `python3 -m json.tool /Users/marc/src/zachgame1/site.webmanifest`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - jump apex sample via test API: normal `y=471`, combo `y=264`
