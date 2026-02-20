@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2158";
+  const BUILD_ID = "2026-02-20-2160";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -69,6 +69,7 @@
     hazardsSinceSnake: 0,
     hazardsSinceEagle: 0,
     failReason: "",
+    failEaglePassCount: 0,
     clouds: [
       { x: 120, y: 34, speedMul: 1.0, scale: 0.42 },
       { x: 740, y: 58, speedMul: 0.92, scale: 0.38 },
@@ -1202,6 +1203,7 @@
       state.hazardsSinceSnake = 0;
       state.hazardsSinceEagle = 0;
       state.failReason = "";
+      state.failEaglePassCount = 0;
       state.failAnimTime = 0;
       state.hitHazardId = null;
       state.lastError = "";
@@ -1603,6 +1605,7 @@
         failSwoopDone: false,
         failSwoopEnabled: Math.random() < 0.52,
         failPeckTimer: 0,
+        failDiveTimer: 0,
         failCruiseYBase: yBase,
         baseScale: scale,
         sprite,
@@ -1751,6 +1754,7 @@
       if (state.mode !== "running") return;
       state.mode = "failed";
       state.failReason = reason;
+      state.failEaglePassCount = 0;
       state.failAnimTime = 0.95;
       state.hitHazardId = hitHazard?.id ?? null;
       if (!state.autoPlay) state.best = Math.max(state.best, state.score);
@@ -2121,13 +2125,16 @@
       }
       if (!h.failSwoopPhase && h.x <= state.player.x + 220) {
         h.failSwoopPhase = "dive";
+        h.failDiveTimer = 0.42;
       }
 
       if (h.failSwoopPhase === "dive") {
         h.x -= Math.max(96, state.speed * 0.62 * (h.speedMul || 1)) * dt;
         h.yBase += (FLOOR_Y - 28 - h.yBase) * Math.min(1, dt * 5.8);
         h.flap += dt * 10.4;
-        if (!h.failSwoopDone && Math.abs(eagleCenterX - brushCenterX) <= 72) {
+        h.failDiveTimer = Math.max(0, (h.failDiveTimer || 0) - dt);
+        const closeEnoughToPeck = Math.abs(eagleCenterX - brushCenterX) <= 92;
+        if (!h.failSwoopDone && (closeEnoughToPeck || h.failDiveTimer <= 0)) {
           h.failSwoopDone = true;
           h.failSwoopPhase = "peck";
           h.failPeckTimer = 0.32;
@@ -2166,14 +2173,17 @@
 
     spawnFailEagle() {
       const hazard = this.createEagleHazard();
-      const destX = WORLD_W + 160 + Math.random() * 220;
+      const mustPeckFirstPass = state.failEaglePassCount === 0;
+      const destX = mustPeckFirstPass ? state.player.x + 250 : WORLD_W + 160 + Math.random() * 220;
       const deltaX = destX - hazard.x;
       hazard.x = destX;
-      hazard.speedMul = 0.92 + Math.random() * 0.22;
-      hazard.failSwoopPhase = "";
+      hazard.speedMul = mustPeckFirstPass ? 0.78 : 0.92 + Math.random() * 0.22;
+      hazard.failSwoopPhase = mustPeckFirstPass ? "dive" : "";
       hazard.failSwoopDone = false;
-      hazard.failSwoopEnabled = Math.random() < 0.52;
+      hazard.failSwoopEnabled = mustPeckFirstPass || Math.random() < 0.5;
       hazard.failPeckTimer = 0;
+      hazard.failDiveTimer = mustPeckFirstPass ? 0.55 : 0;
+      state.failEaglePassCount += 1;
       this.positionHazardVisual(hazard, deltaX);
       state.hazards.push(hazard);
     }
@@ -2227,7 +2237,7 @@
 
             state.nextHazardIn -= dt;
             if (state.nextHazardIn <= 0) {
-              if (Math.random() < 0.44) this.spawnFailEagle();
+              if (state.failEaglePassCount === 0 || Math.random() < 0.5) this.spawnFailEagle();
               else this.spawnFailTumbleweed();
               state.nextHazardIn = 1.5 + Math.random() * 1.9;
             }

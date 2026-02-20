@@ -267,6 +267,56 @@ async function scenarioSnakeFailSequence({ page, scenarioDir }) {
   assert.ok(minJolt < -1.5, `expected visible body jolt on bite, got min offset ${minJolt}`);
 }
 
+async function scenarioEagleFailPeck({ page, scenarioDir }) {
+  const result = await page.evaluate(async () => {
+    const originalRandom = Math.random;
+    try {
+      await window.__zackTest.resetRun({ autoPlay: false });
+      window.__zackTest.clearHazards();
+      window.__zackTest.forceFail("hit by an eagle", "eagle");
+      window.__zackTest.clearHazards();
+      Math.random = () => 0.1;
+
+      let found = null;
+      for (let i = 0; i < 320; i += 1) {
+        await window.__zackTest.step(40);
+        const scene = window.__zackGame?.scene?.scenes?.[0];
+        const player = scene?.playerSprite;
+        const jolt = window.__zackTest.getPlayerDeathJolt();
+        const eagles = scene?.children?.list?.filter(
+          (o) => o?.texture && (o.texture.key === "eagle1" || o.texture.key === "eagle2")
+        ) || [];
+
+        let nearest = null;
+        for (const e of eagles) {
+          const dx = (e.x || 0) - (player?.x || 0);
+          const dy = (e.y || 0) - (player?.y || 0);
+          const d = Math.hypot(dx, dy);
+          if (!nearest || d < nearest.d) nearest = { d, dx, dy, tex: e.texture.key };
+        }
+
+        if (nearest && nearest.d < 130 && Math.abs(nearest.dy) < 130 && Math.abs(jolt.velocity || 0) > 100) {
+          found = {
+            frame: i,
+            nearest,
+            joltOffset: jolt.offset || 0,
+            joltVel: jolt.velocity || 0,
+            eagleCount: eagles.length,
+          };
+          break;
+        }
+      }
+      return found;
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  assert.ok(result, "expected eagle peck + shudder event after death");
+  await page.screenshot({ path: path.join(scenarioDir, "eagle-peck.png"), fullPage: true });
+  await fs.writeFile(path.join(scenarioDir, "eagle-peck.json"), JSON.stringify(result, null, 2));
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   await ensureDir(args.outDir);
@@ -293,6 +343,7 @@ async function main() {
       ["hazard-queue", scenarioHazardQueue],
       ["combo-jump-big-tumbleweed", scenarioComboJumpAndBigTumbleweed],
       ["snake-fail-sequence", scenarioSnakeFailSequence],
+      ["eagle-fail-peck", scenarioEagleFailPeck],
     ];
 
     for (const [name, fn] of scenarios) {
