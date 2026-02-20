@@ -12,9 +12,13 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2032";
+  const BUILD_ID = "2026-02-20-2038";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
+  const COMBO_JUMP_WINDOW_SECONDS = 0.45;
+  const NORMAL_JUMP_VELOCITY = -980;
+  const AUTO_JUMP_VELOCITY = -1160;
+  const COMBO_JUMP_VELOCITY = -1520;
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -94,6 +98,7 @@
       driftTargetX: PLAYER_BASE_X,
       driftTimer: 1.8,
       driftRightPhase: true,
+      wasDuckingLastFrame: false,
       crouchComboTimer: 0,
       comboJumpActive: false,
       deathJoltOffset: 0,
@@ -1004,6 +1009,7 @@
       p.driftTargetX = PLAYER_BASE_X;
       p.driftTimer = 1.8 + Math.random() * 0.9;
       p.driftRightPhase = true;
+      p.wasDuckingLastFrame = false;
       p.crouchComboTimer = 0;
       p.comboJumpActive = false;
       p.deathJoltOffset = 0;
@@ -1933,13 +1939,20 @@
           input.diveHeld = input.diveHeld || this.shouldAutoDuck();
         }
 
-        if (p.onGround && input.diveHeld) p.crouchComboTimer = 0.24;
-        else p.crouchComboTimer = Math.max(0, p.crouchComboTimer - dt);
-        p.duck = p.onGround && input.diveHeld;
+        const crouchingNow = p.onGround && input.diveHeld;
+        if (crouchingNow) {
+          p.crouchComboTimer = COMBO_JUMP_WINDOW_SECONDS;
+        } else {
+          if (p.onGround && p.wasDuckingLastFrame) {
+            p.crouchComboTimer = Math.max(p.crouchComboTimer, COMBO_JUMP_WINDOW_SECONDS);
+          }
+          p.crouchComboTimer = Math.max(0, p.crouchComboTimer - dt);
+        }
+        p.duck = crouchingNow;
 
         if (input.jumpPressed && p.onGround) {
-          const comboJump = !state.autoPlay && p.crouchComboTimer > 0.02;
-          p.vy = comboJump ? -1380 : state.autoPlay ? -1160 : -980;
+          const comboJump = !state.autoPlay && (p.crouchComboTimer > 0.01 || crouchingNow);
+          p.vy = comboJump ? COMBO_JUMP_VELOCITY : state.autoPlay ? AUTO_JUMP_VELOCITY : NORMAL_JUMP_VELOCITY;
           p.onGround = false;
           p.airSprite = Math.random() < AIR_JOY_CHANCE ? "joy" : "jump";
           p.flipActive = false;
@@ -1985,6 +1998,7 @@
             if (p.flipProgress >= 1) p.flipActive = false;
           }
         }
+        p.wasDuckingLastFrame = p.duck;
 
         const sceneryDt = dt;
         state.sceneTime += sceneryDt;

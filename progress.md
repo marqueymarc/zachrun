@@ -196,3 +196,20 @@ TODO
     - `node --check /Users/marc/src/zachgame1/phaser-game.js`
     - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
     - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+- 2026-02-20 20:39: combo-jump reliability hardening
+  - Combo jump trigger widened and made reliable independent of obstacle context.
+  - Added explicit constants for jump velocities and combo timing window:
+    - `COMBO_JUMP_WINDOW_SECONDS = 0.45`
+    - `NORMAL_JUMP_VELOCITY = -980`
+    - `AUTO_JUMP_VELOCITY = -1160`
+    - `COMBO_JUMP_VELOCITY = -1520`
+  - Combo now triggers when crouching or just-released crouch buffer is active on ground.
+  - Build/cache bump: `2026-02-20-2038` / `20260220-2038`.
+  - Measured jump apex via test API (10 trials each):
+    - normal: `y=471`
+    - combo: `y=206`
+    - confirms substantially higher combo jump every trial.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)

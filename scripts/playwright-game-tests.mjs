@@ -191,9 +191,41 @@ async function scenarioComboJumpAndBigTumbleweed({ page, scenarioDir }) {
   });
   assert.ok((big?.w || 0) >= 230, `expected big tumbleweed width to be large, got ${big?.w || 0}`);
 
+  const leap = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    await window.__zackTest.clearHazards();
+    const spawned = window.__zackTest.spawnHazard("tumbleweed", { big: true, x: 530, speedMul: 0.74 });
+    window.__zackTest.setTouches({ left: 1, right: 0 });
+    await window.__zackTest.step(80);
+    window.__zackTest.setTouches({ left: 0, right: 0 });
+    await window.__zackTest.tap("right");
+
+    let best = null;
+    for (let i = 0; i < 120; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      const hazard = state.hazards.find((h) => h.id === spawned.id) || state.hazards[0];
+      if (!hazard) continue;
+      const overlap = state.player.x + 20 > hazard.x && state.player.x - 20 < hazard.x + hazard.w;
+      if (!overlap) continue;
+      const clearancePx = 655 - state.player.y;
+      const sample = {
+        y: state.player.y,
+        clearancePx,
+        hazardX: hazard.x,
+        hazardW: hazard.w,
+        comboJumpActive: state.player.comboJumpActive,
+      };
+      if (!best || clearancePx > best.clearancePx) best = sample;
+    }
+    return best;
+  });
+  assert.ok(leap && leap.clearancePx > 150, `expected leap clearance over giant tumbleweed, got ${JSON.stringify(leap)}`);
+  await page.screenshot({ path: path.join(scenarioDir, "leap-over-big-tumbleweed.png"), fullPage: true });
+
   await fs.writeFile(
     path.join(scenarioDir, "combo-jump.json"),
-    JSON.stringify({ normalJumpMinY, comboJumpMinY, bigHazard: big }, null, 2)
+    JSON.stringify({ normalJumpMinY, comboJumpMinY, bigHazard: big, leap }, null, 2)
   );
 }
 
