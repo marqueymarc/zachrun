@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2155";
+  const BUILD_ID = "2026-02-20-2158";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -1602,6 +1602,7 @@
         failSwoopPhase: "",
         failSwoopDone: false,
         failSwoopEnabled: Math.random() < 0.52,
+        failPeckTimer: 0,
         failCruiseYBase: yBase,
         baseScale: scale,
         sprite,
@@ -2123,14 +2124,27 @@
       }
 
       if (h.failSwoopPhase === "dive") {
-        h.x -= Math.max(120, state.speed * 0.76 * (h.speedMul || 1)) * dt;
-        h.yBase += (FLOOR_Y - 34 - h.yBase) * Math.min(1, dt * 5.2);
+        h.x -= Math.max(96, state.speed * 0.62 * (h.speedMul || 1)) * dt;
+        h.yBase += (FLOOR_Y - 28 - h.yBase) * Math.min(1, dt * 5.8);
         h.flap += dt * 10.4;
-        if (!h.failSwoopDone && Math.abs(eagleCenterX - brushCenterX) <= 58) {
+        if (!h.failSwoopDone && Math.abs(eagleCenterX - brushCenterX) <= 72) {
           h.failSwoopDone = true;
+          h.failSwoopPhase = "peck";
+          h.failPeckTimer = 0.32;
           this.triggerPlayerDeathJolt(0.92);
         }
-        if (h.x <= state.player.x - 10) h.failSwoopPhase = "climb";
+        if (h.x <= state.player.x - 10 && !h.failSwoopDone) h.failSwoopPhase = "climb";
+        return;
+      }
+
+      if (h.failSwoopPhase === "peck") {
+        const peckTargetX = brushCenterX + 18;
+        const peckTargetY = FLOOR_Y - 20;
+        h.x += (peckTargetX - eagleCenterX) * Math.min(1, dt * 10.5);
+        h.yBase += (peckTargetY - h.yBase) * Math.min(1, dt * 9.4);
+        h.flap += dt * 12.2;
+        h.failPeckTimer = Math.max(0, (h.failPeckTimer || 0) - dt);
+        if (h.failPeckTimer <= 0) h.failSwoopPhase = "climb";
         return;
       }
 
@@ -2159,6 +2173,7 @@
       hazard.failSwoopPhase = "";
       hazard.failSwoopDone = false;
       hazard.failSwoopEnabled = Math.random() < 0.52;
+      hazard.failPeckTimer = 0;
       this.positionHazardVisual(hazard, deltaX);
       state.hazards.push(hazard);
     }
