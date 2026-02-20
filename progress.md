@@ -139,3 +139,23 @@ TODO
       - `output/web-game-build-20260220-1918/state-0.json` (mode=running, score=5, build=2026-02-20-1918)
       - `output/web-game-build-20260220-1918-restart/shot-0.png`
       - `output/web-game-build-20260220-1918-restart/state-0.json` (mode=running after forced fail + tap restart sequence)
+- 2026-02-20 20:00: deterministic test API + Playwright scenario suite
+  - Added `?test=1` test control API in `phaser-game.js` via `window.__zackTest` with methods to drive game state directly:
+    - `getState`, `getInput`, `step`, `setTouches`, `tap`, `resetRun`, `setMode`, `setElapsed`
+    - `clearHazards`, `queueHazards`, `spawnNextHazard`, `spawnHazard`, `forceFail`
+    - `getKillerSnakePhase`, `getPlayerDeathJolt`
+  - Added forced spawn queue support (`state.testSpawnQueue`) so tests can request explicit antagonist order.
+  - Added snake-bite death body jolt: dead Zack now hops slightly on each killer-snake bite in fail choreography.
+  - Build/cache bump to `2026-02-20-1948` / `20260220-1948`.
+  - Added Playwright scenario runner:
+    - `scripts/playwright-game-tests.mjs`
+    - `scripts/run-playwright-game-tests.sh`
+  - Scenario coverage implemented and passing:
+    - single-tap start/restart
+    - touch guide auto-hide timing
+    - left/right touch hold mapping
+    - queued hazard spawn order
+    - snake fail phase sequence + player jolt assertion
+  - Verified via local run against `http://127.0.0.1:5173`:
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173`
+    - artifacts in `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-20T20-00-35-971Z`

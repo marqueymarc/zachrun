@@ -1,16 +1,18 @@
 (() => {
   const statusText = document.getElementById("status-text");
+  const urlParams = new URLSearchParams(window.location.search);
 
   const WORLD_W = 1920;
   const WORLD_H = 864;
   const IS_TOUCH_FULLSCREEN = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  const TEST_MODE = urlParams.get("test") === "1";
   const FLOOR_Y = 655;
   const GRAVITY = 2500;
   const TARGET_SCORE = 12000;
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-1918";
+  const BUILD_ID = "2026-02-20-1948";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const AIR_JOY_CHANCE = 0.18;
   const CAMERA_BASE_SCREEN_X = WORLD_W * 0.27;
@@ -89,7 +91,10 @@
       driftTargetX: PLAYER_BASE_X,
       driftTimer: 1.8,
       driftRightPhase: true,
+      deathJoltOffset: 0,
+      deathJoltVelocity: 0,
     },
+    testSpawnQueue: [],
     hazards: [],
     failAnimTime: 0,
     hitHazardId: null,
@@ -125,6 +130,13 @@
 
   function randBetween(min, max) {
     return min + Math.random() * (max - min);
+  }
+
+  function normalizeHazardType(type) {
+    if (typeof type !== "string") return null;
+    const value = type.trim().toLowerCase();
+    if (value === "snake" || value === "eagle" || value === "tumbleweed") return value;
+    return null;
   }
 
   function midiToFreq(midi) {
@@ -241,7 +253,7 @@
       this.load.image("jump", "./assets/zack/sprites/jump.png?v=1010");
       this.load.image("joy", "./assets/zack/sprites/joy.png?v=1010");
       this.load.image("horror", "./assets/zack/sprites/horror.png?v=1010");
-      this.load.image("horrorDeath", "./assets/zack/sprites/horror_death.png?v=20260220-1918");
+      this.load.image("horrorDeath", `./assets/zack/sprites/horror_death.png?v=${BUILD_ID}`);
       this.load.image("farBg", "./assets/zack/sprites/far_background_x.png");
       this.load.image("nearBg", "./assets/zack/sprites/near_background.png");
       this.load.image("clouds", "./assets/world/clouds.png");
@@ -269,6 +281,145 @@
       state.mode = "menu";
       setStatus("Tap anywhere to start.");
       this.refreshHud();
+    }
+
+    installTestApi() {
+      if (!TEST_MODE) return;
+      const getStatePayload = () => {
+        try {
+          return JSON.parse(window.render_game_to_text?.() || "{}");
+        } catch (_error) {
+          return {};
+        }
+      };
+      const api = {
+        enabled: true,
+        build: BUILD_ID,
+        getState: () => getStatePayload(),
+        getInput: () => ({
+          jumpPressed: input.jumpPressed,
+          jumpHeld: input.jumpHeld,
+          diveHeld: input.diveHeld,
+          touchLeftCount: input.touchLeftCount,
+          touchRightCount: input.touchRightCount,
+        }),
+        step: async (ms = 16) => {
+          const totalMs = Math.max(0, Number(ms) || 0);
+          const frameMs = 1000 / 60;
+          const frames = Math.max(1, Math.round(totalMs / frameMs));
+          for (let i = 0; i < frames; i += 1) {
+            this.update(0, frameMs);
+          }
+          return getStatePayload();
+        },
+        setTouches: ({ left = 0, right = 0 } = {}) => {
+          input.touchLeftCount = Math.max(0, Math.floor(Number(left) || 0));
+          input.touchRightCount = Math.max(0, Math.floor(Number(right) || 0));
+          this.recomputeTouchHold?.();
+          return api.getInput();
+        },
+        tap: async (side = "right") => {
+          if (state.mode !== "running") {
+            await this.startOrRestartRun();
+            return getStatePayload();
+          }
+          if (String(side).toLowerCase() === "right") input.jumpPressed = true;
+          else input.diveHeld = true;
+          return getStatePayload();
+        },
+        resetRun: async ({ autoPlay = false } = {}) => {
+          state.autoPlay = Boolean(autoPlay);
+          this.resetGame();
+          return getStatePayload();
+        },
+        setElapsed: (seconds = 0) => {
+          state.time = Math.max(0, Number(seconds) || 0);
+          this.refreshHud();
+          return state.time;
+        },
+        setMode: async (mode) => {
+          if (mode === "menu") {
+            stopMusic();
+            state.mode = "menu";
+            this.refreshHud();
+            return getStatePayload();
+          }
+          if (mode === "running") {
+            this.resetGame();
+            return getStatePayload();
+          }
+          if (mode === "failed") {
+            api.forceFail("test fail", "tumbleweed");
+            return getStatePayload();
+          }
+          return getStatePayload();
+        },
+        clearHazards: () => {
+          for (const h of state.hazards) this.destroyHazard(h);
+          state.hazards = [];
+          return true;
+        },
+        queueHazards: (types = []) => {
+          state.testSpawnQueue = Array.isArray(types)
+            ? types.map((t) => normalizeHazardType(t)).filter(Boolean)
+            : [];
+          return [...state.testSpawnQueue];
+        },
+        spawnNextHazard: () => {
+          this.spawnHazard();
+          const h = state.hazards[state.hazards.length - 1];
+          return h ? { id: h.id, type: h.type, x: h.x } : null;
+        },
+        spawnHazard: (type, options = {}) => {
+          const hazardType = normalizeHazardType(type) || "tumbleweed";
+          const h =
+            hazardType === "snake"
+              ? this.createSnakeHazard()
+              : hazardType === "eagle"
+                ? this.createEagleHazard()
+                : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0);
+
+          const targetX = Number.isFinite(options.x) ? options.x : state.player.x + 500;
+          const deltaX = targetX - h.x;
+          h.x = targetX;
+          if (Number.isFinite(options.yFloor) && Number.isFinite(h.yFloor)) h.yFloor = options.yFloor;
+          if (Number.isFinite(options.speedMul)) h.speedMul = options.speedMul;
+          h.enteredAt = Number.isFinite(options.enteredAt) ? options.enteredAt : Math.max(0, state.time - 1.2);
+          this.positionHazardVisual(h, deltaX);
+          state.hazards.push(h);
+          return { id: h.id, type: h.type, x: h.x, yFloor: h.yFloor };
+        },
+        forceFail: (reason = "hit a tumbleweed", hitType = "tumbleweed") => {
+          const targetType = normalizeHazardType(hitType) || "tumbleweed";
+          let hit = state.hazards.find((h) => h.type === targetType);
+          if (!hit) {
+            const created = api.spawnHazard(targetType, { x: state.player.x + 48 });
+            hit = state.hazards.find((h) => h.id === created.id);
+          }
+          this.fail(reason, hit);
+          return { mode: state.mode, reason: state.failReason, hitHazardId: state.hitHazardId };
+        },
+        getKillerSnakePhase: () => {
+          const killer = state.hazards.find((h) => h.type === "snake" && h.isFailKiller);
+          if (!killer) return null;
+          return {
+            id: killer.id,
+            phase: killer.postFailPhase || "",
+            bitesRemaining: killer.postFailBites || 0,
+            x: killer.x,
+            flipX: Boolean(killer.flipX),
+          };
+        },
+        getPlayerDeathJolt: () => ({
+          offset: state.player.deathJoltOffset,
+          velocity: state.player.deathJoltVelocity,
+        }),
+      };
+
+      window.__zackTest = api;
+      this.events.once("shutdown", () => {
+        if (window.__zackTest === api) delete window.__zackTest;
+      });
     }
 
     createLayers() {
@@ -701,6 +852,7 @@
             onGround: p.onGround,
             inWater: p.inWater,
             expressionCategory: p.expression,
+            deathJoltOffset: Number((p.deathJoltOffset || 0).toFixed(2)),
           },
           speed: Math.round(state.speed),
           maxSpeed: MAX_RUN_SPEED,
@@ -728,7 +880,11 @@
       };
 
       window.get_auto_debug_log = () => JSON.stringify(state.autoDebug.events, null, 2);
-      window.advanceTime = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      window.advanceTime = (ms) =>
+        window.__zackTest?.step
+          ? window.__zackTest.step(ms)
+          : new Promise((resolve) => setTimeout(resolve, ms));
+      this.installTestApi();
     }
 
     async startOrRestartRun() {
@@ -789,6 +945,8 @@
       p.driftTargetX = PLAYER_BASE_X;
       p.driftTimer = 1.8 + Math.random() * 0.9;
       p.driftRightPhase = true;
+      p.deathJoltOffset = 0;
+      p.deathJoltVelocity = 0;
       input.touchLeftCount = 0;
       input.touchRightCount = 0;
       if (this.activeTouchSides) this.activeTouchSides.clear();
@@ -1101,13 +1259,17 @@
     }
 
     spawnHazard() {
+      const queuedType = normalizeHazardType(state.testSpawnQueue[0]);
+      if (queuedType) state.testSpawnQueue.shift();
       const mustSnake = state.hazardsSpawned > 2 && state.hazardsSinceSnake >= 3;
       const mustEagle = state.hazardsSpawned > 2 && state.hazardsSinceEagle >= 3;
       const spawnEagle = mustEagle || (state.hazardsSpawned > 1 && Math.random() < 0.28);
       const spawnSnake = !spawnEagle && (mustSnake || (state.hazardsSpawned > 1 && Math.random() < 0.34));
-      const hazard = spawnEagle
+      const useSnake = queuedType ? queuedType === "snake" : spawnSnake;
+      const useEagle = queuedType ? queuedType === "eagle" : spawnEagle;
+      const hazard = useEagle
         ? this.createEagleHazard()
-        : spawnSnake
+        : useSnake
           ? this.createSnakeHazard()
           : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0);
 
@@ -1122,8 +1284,8 @@
       state.hazards.push(hazard);
       state.lastHazardEndX = x + hazard.visibleW;
       state.hazardsSpawned += 1;
-      state.hazardsSinceSnake = spawnSnake ? 0 : state.hazardsSinceSnake + 1;
-      state.hazardsSinceEagle = spawnEagle ? 0 : state.hazardsSinceEagle + 1;
+      state.hazardsSinceSnake = useSnake ? 0 : state.hazardsSinceSnake + 1;
+      state.hazardsSinceEagle = useEagle ? 0 : state.hazardsSinceEagle + 1;
 
       state.hazardStreak += 1;
       const cadence = Math.max(0.52, 1 - state.time / 80);
@@ -1264,6 +1426,8 @@
         p.onGround = true;
         p.flipActive = false;
         p.flipProgress = 0;
+        p.deathJoltOffset = 0;
+        p.deathJoltVelocity = 0;
 
         hitHazard.x = state.player.x - hitHazard.visibleW * 0.38;
         hitHazard.yFloor = FLOOR_Y + 2;
@@ -1279,6 +1443,11 @@
         hitHazard.postFailRetreatX = hitHazard.x + SNAKE_FAIL_RETREAT_DISTANCE;
         hitHazard.flipX = false;
         hitHazard.isFailKiller = true;
+      }
+
+      if (reason !== "killed by a snake bite") {
+        state.player.deathJoltOffset = 0;
+        state.player.deathJoltVelocity = 0;
       }
 
       if (reason === "hit by an eagle") {
@@ -1363,7 +1532,7 @@
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (250 * 1.04) * 0.5 + 12;
         const lieX = clamp(p.x - 12 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16);
+        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16 + p.deathJoltOffset);
         this.playerSprite.setRotation(deathRotation);
         this.playerSprite.setScale(normalizedScaleX * 0.96 * deathScaleX, normalizedScaleY * 0.94 * deathScaleY);
         this.playerSplatBig.setPosition(lieX + 10, FLOOR_Y + 20);
@@ -1465,12 +1634,21 @@
       }
     }
 
+    triggerPlayerDeathJolt(power = 1) {
+      const p = state.player;
+      const impulse = 220 * clamp(power, 0.4, 1.8);
+      p.deathJoltVelocity = Math.max(p.deathJoltVelocity, impulse);
+    }
+
     advanceSnakeStrike(h, dt) {
       h.strikePause = (h.strikePause ?? 0.38) - dt;
       if (!h.isStriking && h.strikePause <= 0) {
         h.isStriking = true;
         h.strikeTimer = 0.32;
         h.strikePause = 0.68 + Math.random() * 0.42;
+        if (state.mode === "failed" && state.failReason === "killed by a snake bite" && h.isFailKiller) {
+          this.triggerPlayerDeathJolt(1);
+        }
       }
       if (h.isStriking) {
         h.strikeTimer = Math.max(0, (h.strikeTimer || 0) - dt);
@@ -1573,6 +1751,22 @@
 
         if (state.mode !== "running") {
           if (state.mode === "failed") {
+            if (state.failReason === "killed by a snake bite") {
+              const p = state.player;
+              p.deathJoltVelocity -= 960 * dt;
+              p.deathJoltOffset -= p.deathJoltVelocity * dt;
+              if (p.deathJoltOffset > 0) {
+                p.deathJoltOffset = 0;
+                p.deathJoltVelocity = 0;
+              } else if (p.deathJoltOffset < -18 && p.deathJoltVelocity < 0) {
+                p.deathJoltOffset = -18;
+                p.deathJoltVelocity *= -0.34;
+              }
+            } else {
+              state.player.deathJoltOffset = 0;
+              state.player.deathJoltVelocity = 0;
+            }
+
             for (const c of state.clouds) {
               c.x -= CLOUD_SCROLL_SPEED * c.speedMul * dt * 0.6;
               if (c.x < -480) {

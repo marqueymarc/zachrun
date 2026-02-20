@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+async function loadPlaywright() {
+  try {
+    return await import("playwright");
+  } catch (_error) {
+    const fallbackPath =
+      process.env.PLAYWRIGHT_MODULE_PATH || path.join(process.env.HOME || "", "node_modules", "playwright", "index.mjs");
+    return import(pathToFileURL(fallbackPath).href);
+  }
+}
+
+function parseArgs(argv) {
+  const args = {
+    url: "http://127.0.0.1:5173",
+    outDir: null,
+  };
+  for (let i = 2; i < argv.length; i += 1) {
+    if (argv[i] === "--url" && argv[i + 1]) {
+      args.url = argv[i + 1];
+      i += 1;
+    } else if (argv[i] === "--out-dir" && argv[i + 1]) {
+      args.outDir = argv[i + 1];
+      i += 1;
+    }
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  if (!args.outDir) args.outDir = path.resolve("output", `playwright-tests-${stamp}`);
+  return args;
+}
+
+async function ensureDir(p) {
+  await fs.mkdir(p, { recursive: true });
+}
+
+async function waitForMode(page, mode, timeoutMs = 7000) {
+  await page.waitForFunction(
+    (expected) => window.__zackTest?.getState?.()?.mode === expected,
+    mode,
+    { timeout: timeoutMs }
+  );
+}
+
+async function gotoTestPage(page, url) {
+  const testUrl = `${url}${url.includes("?") ? "&" : "?"}test=1`;
+  await page.goto(testUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => Boolean(window.__zackTest?.enabled), null, { timeout: 10000 });
+}
+
+async function runScenario(name, page, outDir, fn) {
+  const scenarioDir = path.join(outDir, name);
+  await ensureDir(scenarioDir);
+  await fn({ page, scenarioDir });
+  await page.screenshot({ path: path.join(scenarioDir, "full.png"), fullPage: true });
+  const state = await page.evaluate(() => window.__zackTest.getState());
+  await fs.writeFile(path.join(scenarioDir, "state.json"), JSON.stringify(state, null, 2));
+}
+
+async function scenarioTapStartRestart({ page }) {
+  const initial = await page.evaluate(() => window.__zackTest.getState());
+  assert.equal(initial.mode, "menu", "expected menu mode on load");
+
+  const vp = page.viewportSize();
+  await page.mouse.click(Math.round(vp.width * 0.52), Math.round(vp.height * 0.52));
+  await waitForMode(page, "running");
+
+  await page.evaluate(() => window.__zackTest.forceFail("hit a tumbleweed", "tumbleweed"));
+  await waitForMode(page, "failed");
+
+  await page.mouse.click(Math.round(vp.width * 0.08), Math.round(vp.height * 0.15));
+  await waitForMode(page, "running");
+}
+
+async function scenarioTouchGuideHides({ page, scenarioDir }) {
+  await page.evaluate(() => window.__zackTest.resetRun());
+  await waitForMode(page, "running");
+
+  const startDisplay = await page.evaluate(() => getComputedStyle(document.getElementById("touch-guide")).display);
+  assert.equal(startDisplay, "flex", "touch guide should be visible when run begins");
+
+  await page.evaluate(() => window.__zackTest.setElapsed(5));
+  const laterDisplay = await page.evaluate(() => getComputedStyle(document.getElementById("touch-guide")).display);
+  assert.equal(laterDisplay, "none", "touch guide should hide after intro period");
+
+  await fs.writeFile(
+    path.join(scenarioDir, "touch-guide.json"),
+    JSON.stringify({ startDisplay, laterDisplay }, null, 2)
+  );
+}
+
+async function scenarioTouchHolds({ page }) {
+  await page.evaluate(() => window.__zackTest.resetRun());
+  await waitForMode(page, "running");
+
+  let sample = await page.evaluate(() => {
+    window.__zackTest.setTouches({ left: 0, right: 1 });
+    return window.__zackTest.getInput();
+  });
+  assert.equal(sample.jumpHeld, true, "right touch should hold jump");
+  assert.equal(sample.diveHeld, false, "right touch should not hold dive");
+
+  sample = await page.evaluate(() => {
+    window.__zackTest.setTouches({ left: 1, right: 0 });
+    return window.__zackTest.getInput();
+  });
+  assert.equal(sample.jumpHeld, false, "left touch should release jump hold");
+  assert.equal(sample.diveHeld, true, "left touch should hold dive");
+
+  sample = await page.evaluate(() => {
+    window.__zackTest.setTouches({ left: 1, right: 1 });
+    return window.__zackTest.getInput();
+  });
+  assert.equal(sample.jumpHeld, true, "both touches should keep jump held");
+  assert.equal(sample.diveHeld, true, "both touches should keep dive held");
+
+  await page.evaluate(() => window.__zackTest.setTouches({ left: 0, right: 0 }));
+}
+
+async function scenarioHazardQueue({ page, scenarioDir }) {
+  const spawned = await page.evaluate(() => {
+    window.__zackTest.resetRun();
+    window.__zackTest.clearHazards();
+    window.__zackTest.queueHazards(["snake", "eagle", "tumbleweed"]);
+    return [
+      window.__zackTest.spawnNextHazard(),
+      window.__zackTest.spawnNextHazard(),
+      window.__zackTest.spawnNextHazard(),
+    ];
+  });
+  const types = spawned.map((h) => h?.type || null);
+  assert.deepEqual(types, ["snake", "eagle", "tumbleweed"], "queued hazards should spawn in requested order");
+  await fs.writeFile(path.join(scenarioDir, "spawned.json"), JSON.stringify(spawned, null, 2));
+}
+
+async function scenarioSnakeFailSequence({ page, scenarioDir }) {
+  await page.evaluate(() => {
+    window.__zackTest.resetRun();
+    window.__zackTest.clearHazards();
+    window.__zackTest.forceFail("killed by a snake bite", "snake");
+  });
+  await waitForMode(page, "failed");
+
+  const timeline = [];
+  for (let i = 0; i < 90; i += 1) {
+    const sample = await page.evaluate(async () => {
+      await window.__zackTest.step(120);
+      return {
+        phase: window.__zackTest.getKillerSnakePhase()?.phase || "",
+        jolt: window.__zackTest.getPlayerDeathJolt()?.offset || 0,
+      };
+    });
+    timeline.push(sample);
+  }
+  await fs.writeFile(path.join(scenarioDir, "snake-timeline.json"), JSON.stringify(timeline, null, 2));
+
+  const phases = timeline.map((s) => s.phase).filter(Boolean);
+  const expected = ["bite-near", "retreat-right", "return-for-last", "bite-final", "wander-left"];
+  let cursor = -1;
+  for (const step of expected) {
+    const index = phases.findIndex((v, i) => i > cursor && v === step);
+    assert.ok(index > cursor, `missing snake fail phase: ${step}`);
+    cursor = index;
+  }
+
+  const minJolt = timeline.reduce((min, s) => Math.min(min, s.jolt), 0);
+  assert.ok(minJolt < -1.5, `expected visible body jolt on bite, got min offset ${minJolt}`);
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  await ensureDir(args.outDir);
+  const { chromium } = await loadPlaywright();
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--use-gl=angle", "--use-angle=swiftshader"],
+  });
+
+  const context = await browser.newContext({
+    viewport: { width: 1792, height: 1024 },
+  });
+  const page = await context.newPage();
+  const results = [];
+  try {
+    await gotoTestPage(page, args.url);
+
+    const scenarios = [
+      ["tap-start-restart", scenarioTapStartRestart],
+      ["touch-guide-hide", scenarioTouchGuideHides],
+      ["touch-holds", scenarioTouchHolds],
+      ["hazard-queue", scenarioHazardQueue],
+      ["snake-fail-sequence", scenarioSnakeFailSequence],
+    ];
+
+    for (const [name, fn] of scenarios) {
+      await runScenario(name, page, args.outDir, fn);
+      results.push({ scenario: name, ok: true });
+      console.log(`PASS ${name}`);
+    }
+  } catch (error) {
+    const message = String(error?.stack || error?.message || error);
+    results.push({ scenario: "failed", ok: false, error: message });
+    await fs.writeFile(path.join(args.outDir, "failure.txt"), `${message}\n`);
+    throw error;
+  } finally {
+    await fs.writeFile(path.join(args.outDir, "summary.json"), JSON.stringify(results, null, 2));
+    await context.close();
+    await browser.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
