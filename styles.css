@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+:root {
+  --app-vw: 100vw;
+  --app-vh: 100dvh;
+}
+
 html,
 body {
   margin: 0;
@@ -105,14 +110,14 @@ body {
 @media (hover: none) and (pointer: coarse) {
   .game-page {
     display: block;
-    width: 100vw;
-    height: 100dvh;
+    width: var(--app-vw);
+    height: var(--app-vh);
     padding: 0;
   }
 
   .game-wrap {
-    width: 100vw;
-    height: 100dvh;
+    width: var(--app-vw);
+    height: var(--app-vh);
     aspect-ratio: auto;
   }
 }

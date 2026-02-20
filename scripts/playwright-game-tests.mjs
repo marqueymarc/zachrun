@@ -125,15 +125,19 @@ async function scenarioDoubleTapAutoplay({ page }) {
   await waitForMode(page, "running");
   const vp = page.viewportSize();
 
+  await page.mouse.dblclick(Math.round(vp.width * 0.22), Math.round(vp.height * 0.62), { delay: 45 });
+  await page.waitForTimeout(70);
   await page.mouse.dblclick(Math.round(vp.width * 0.78), Math.round(vp.height * 0.62), { delay: 45 });
   await page.waitForTimeout(60);
   let autoPlay = await page.evaluate(() => window.__zackTest.getState().autoPlay);
-  assert.equal(autoPlay, true, "double-tap on right side should enable autoplay");
+  assert.equal(autoPlay, true, "double-left then double-right should enable autoplay");
 
   await page.mouse.dblclick(Math.round(vp.width * 0.22), Math.round(vp.height * 0.62), { delay: 45 });
+  await page.waitForTimeout(70);
+  await page.mouse.dblclick(Math.round(vp.width * 0.78), Math.round(vp.height * 0.62), { delay: 45 });
   await page.waitForTimeout(60);
   autoPlay = await page.evaluate(() => window.__zackTest.getState().autoPlay);
-  assert.equal(autoPlay, false, "double-tap on left side should disable autoplay");
+  assert.equal(autoPlay, false, "double-left then double-right should disable autoplay");
 }
 
 async function scenarioHazardQueue({ page, scenarioDir }) {

@@ -14,13 +14,15 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2054";
+  const BUILD_ID = "2026-02-20-2132";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
+  const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
   const COMBO_JUMP_WINDOW_SECONDS = 0.45;
   const NORMAL_JUMP_VELOCITY = -980;
   const AUTO_JUMP_VELOCITY = -1160;
   const COMBO_JUMP_VELOCITY = -1420;
+  const EAGLE_COMBO_CLEARANCE = 168;
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -118,6 +120,7 @@
     musicPattern: [64, 67, 71, 67, 62, 66, 69, 66],
     musicStep: 0,
     audioPrimed: false,
+    musicShouldPlay: false,
     autoDebug: {
       enabled: true,
       lastLogAt: -999,
@@ -143,6 +146,17 @@
 
   function randBetween(min, max) {
     return min + Math.random() * (max - min);
+  }
+
+  function syncTouchViewportVars() {
+    if (!IS_TOUCH_FULLSCREEN) return;
+    const root = document.documentElement;
+    if (!root) return;
+    const vv = window.visualViewport;
+    const vw = Math.max(1, Math.round(vv?.width || window.innerWidth || WORLD_W));
+    const vh = Math.max(1, Math.round(vv?.height || window.innerHeight || WORLD_H));
+    root.style.setProperty("--app-vw", `${vw}px`);
+    root.style.setProperty("--app-vh", `${vh}px`);
   }
 
   function normalizeHazardType(type) {
@@ -199,15 +213,25 @@
   }
 
   function activateAudio() {
-    if (state.audioReady) return;
-    state.audioReady = true;
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (state.audioCtx) {
+      state.audioReady = true;
+      return;
+    }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ac = new Ctx();
     state.audioCtx = ac;
+    state.audioReady = true;
 
     const musicGain = ac.createGain();
     musicGain.gain.value = 0.14;
     musicGain.connect(ac.destination);
     state.musicGain = musicGain;
+    ac.onstatechange = () => {
+      if (ac.state !== "running") return;
+      primeAudioContext();
+      if (state.musicShouldPlay && state.mode === "running") startMusic();
+    };
   }
 
   function primeAudioContext() {
@@ -229,7 +253,8 @@
   }
 
   function startMusic() {
-    if (!state.audioReady || state.musicTimerId) return;
+    state.musicShouldPlay = true;
+    if (!state.audioReady || !state.audioCtx || state.audioCtx.state !== "running" || state.musicTimerId) return;
     if (state.musicGain && state.audioCtx) {
       state.musicGain.gain.setTargetAtTime(0.14, state.audioCtx.currentTime, 0.06);
     }
@@ -246,6 +271,7 @@
   }
 
   function stopMusic() {
+    state.musicShouldPlay = false;
     if (state.musicTimerId) {
       window.clearInterval(state.musicTimerId);
       state.musicTimerId = null;
@@ -703,6 +729,13 @@
       this.rotateOverlayEl = document.getElementById("rotate-overlay");
       this.rotateOverlayTextEl = document.getElementById("rotate-overlay-text");
       this.gameWrapEl = document.getElementById("game-wrap");
+      this.autoTapSequencePhase = 0;
+      this.autoTapSequenceUntil = 0;
+      this.viewportPollTimer = 0;
+      this.lastViewportW = 0;
+      this.lastViewportH = 0;
+      this.bindViewportSync();
+      this.refreshViewportSizing(true);
       if (this.hudBuildEl) this.hudBuildEl.textContent = `Build ${BUILD_ID}`;
       if (this.rotateOverlayTextEl && IS_TOUCH_FULLSCREEN && !IS_STANDALONE_APP) {
         this.rotateOverlayTextEl.textContent = "Rotate to landscape. For true full screen, Add to Home Screen and open Zack Run from there.";
@@ -753,18 +786,30 @@
       this.refreshHud();
     }
 
-    async unlockAudioFromGesture() {
+    unlockAudioFromGesture() {
       activateAudio();
       if (!state.audioCtx) return;
+      const onRunning = () => {
+        primeAudioContext();
+        if (state.mode === "running" && state.musicShouldPlay) startMusic();
+      };
+      if (state.audioCtx.state === "running") {
+        onRunning();
+        return;
+      }
       if (state.audioCtx.state === "suspended") {
         try {
-          await state.audioCtx.resume();
+          const resumed = state.audioCtx.resume();
+          if (resumed?.then) {
+            resumed
+              .then(() => {
+                if (state.audioCtx?.state === "running") onRunning();
+              })
+              .catch(() => {});
+          }
         } catch (_error) {
           // iOS can reject resume until the next trusted gesture.
         }
-      }
-      if (state.audioCtx.state === "running") {
-        primeAudioContext();
       }
     }
 
@@ -783,6 +828,51 @@
       } catch (_error) {
         // Ignore orientation lock failures on unsupported browsers.
       }
+      this.refreshViewportSizing();
+      setTimeout(() => this.refreshViewportSizing(), 120);
+      setTimeout(() => this.refreshViewportSizing(), 420);
+    }
+
+    bindViewportSync() {
+      if (!IS_TOUCH_FULLSCREEN) return;
+      this.viewportSyncHandler = () => this.refreshViewportSizing();
+      this.pageShowHandler = () => this.refreshViewportSizing(true);
+      window.addEventListener("resize", this.viewportSyncHandler, { passive: true });
+      window.addEventListener("orientationchange", this.viewportSyncHandler, { passive: true });
+      window.addEventListener("pageshow", this.pageShowHandler, { passive: true });
+      document.addEventListener("visibilitychange", this.pageShowHandler, { passive: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", this.viewportSyncHandler, { passive: true });
+        window.visualViewport.addEventListener("scroll", this.viewportSyncHandler, { passive: true });
+      }
+      this.events.once("shutdown", () => {
+        if (!this.viewportSyncHandler) return;
+        window.removeEventListener("resize", this.viewportSyncHandler);
+        window.removeEventListener("orientationchange", this.viewportSyncHandler);
+        window.removeEventListener("pageshow", this.pageShowHandler);
+        document.removeEventListener("visibilitychange", this.pageShowHandler);
+        if (window.visualViewport) {
+          window.visualViewport.removeEventListener("resize", this.viewportSyncHandler);
+          window.visualViewport.removeEventListener("scroll", this.viewportSyncHandler);
+        }
+      });
+    }
+
+    refreshViewportSizing(force = false) {
+      if (!IS_TOUCH_FULLSCREEN) return;
+      syncTouchViewportVars();
+      const vv = window.visualViewport;
+      const vw = Math.max(1, Math.round(vv?.width || window.innerWidth || WORLD_W));
+      const vh = Math.max(1, Math.round(vv?.height || window.innerHeight || WORLD_H));
+      if (!force && vw === this.lastViewportW && vh === this.lastViewportH) return;
+      this.lastViewportW = vw;
+      this.lastViewportH = vh;
+      if (this.gameWrapEl) {
+        this.gameWrapEl.style.width = `${vw}px`;
+        this.gameWrapEl.style.height = `${vh}px`;
+      }
+      this.scale?.setGameSize?.(WORLD_W, WORLD_H);
+      this.scale?.refresh?.();
     }
 
     bindInput() {
@@ -858,10 +948,21 @@
         this.unlockAudioFromGesture();
         const side = this.sideFromClientX(event.clientX);
         const now = performance.now();
+        if (now > this.autoTapSequenceUntil) this.autoTapSequencePhase = 0;
         if (now - this.lastTapAtBySide[side] <= DOUBLE_TAP_WINDOW_MS) {
           this.lastTapAtBySide[side] = -999999;
-          this.toggleAutoPlay();
-          return;
+          if (side === "left") {
+            this.autoTapSequencePhase = 1;
+            this.autoTapSequenceUntil = now + AUTO_TAP_SEQUENCE_WINDOW_MS;
+            setStatus("AUTO gesture armed: double-tap right now.");
+            return;
+          }
+          if (side === "right" && this.autoTapSequencePhase === 1 && now <= this.autoTapSequenceUntil) {
+            this.autoTapSequencePhase = 0;
+            this.autoTapSequenceUntil = 0;
+            this.toggleAutoPlay();
+            return;
+          }
         }
         this.lastTapAtBySide[side] = now;
         if (state.mode !== "running") {
@@ -869,6 +970,9 @@
           return;
         }
         this.assignTouchSide(event.pointerId, event.clientX);
+        if (this.activeTouchSides.get(event.pointerId) === "left" && state.player.onGround) {
+          state.player.crouchComboTimer = COMBO_JUMP_WINDOW_SECONDS;
+        }
         if (this.activeTouchSides.get(event.pointerId) === "right") {
           input.jumpPressed = true;
         }
@@ -893,8 +997,11 @@
         this.gameWrapEl.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
         this.gameWrapEl.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
         this.gameWrapEl.addEventListener("pointerleave", this.wrapPointerUp, { passive: true });
+        this.gameWrapEl.addEventListener("pointerup", this.wrapGestureUnlock, { passive: true });
         this.gameWrapEl.addEventListener("touchstart", this.wrapGestureUnlock, { passive: true });
+        this.gameWrapEl.addEventListener("touchend", this.wrapGestureUnlock, { passive: true });
         this.gameWrapEl.addEventListener("mousedown", this.wrapGestureUnlock, { passive: true });
+        this.gameWrapEl.addEventListener("click", this.wrapGestureUnlock, { passive: true });
       }
       window.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
       window.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
@@ -906,8 +1013,11 @@
           this.gameWrapEl.removeEventListener("pointerup", this.wrapPointerUp);
           this.gameWrapEl.removeEventListener("pointercancel", this.wrapPointerUp);
           this.gameWrapEl.removeEventListener("pointerleave", this.wrapPointerUp);
+          this.gameWrapEl.removeEventListener("pointerup", this.wrapGestureUnlock);
           this.gameWrapEl.removeEventListener("touchstart", this.wrapGestureUnlock);
+          this.gameWrapEl.removeEventListener("touchend", this.wrapGestureUnlock);
           this.gameWrapEl.removeEventListener("mousedown", this.wrapGestureUnlock);
+          this.gameWrapEl.removeEventListener("click", this.wrapGestureUnlock);
         }
         window.removeEventListener("pointerup", this.wrapPointerUp);
         window.removeEventListener("pointercancel", this.wrapPointerUp);
@@ -980,10 +1090,11 @@
     }
 
     async startOrRestartRun() {
-      await this.unlockAudioFromGesture();
+      this.unlockAudioFromGesture();
       this.enterMobileImmersive();
       this.resetGame();
       startMusic();
+      this.refreshViewportSizing(true);
     }
 
     resetGame() {
@@ -1006,6 +1117,8 @@
       state.autoDebug.lastLogAt = -999;
       state.autoDebug.events = [];
       state.autoDebug.lastJumpDecision = null;
+      this.autoTapSequencePhase = 0;
+      this.autoTapSequenceUntil = 0;
 
       for (const h of state.hazards) this.destroyHazard(h);
       state.hazards = [];
@@ -1358,6 +1471,9 @@
         flap: Math.random() * Math.PI * 2,
         bobPhase: Math.random() * Math.PI * 2,
         hitDrop: 0,
+        failSwoopPhase: "",
+        failSwoopDone: false,
+        failCruiseYBase: yBase,
         baseScale: scale,
         sprite,
         shadow,
@@ -1713,11 +1829,11 @@
       if (showFail) {
         this.failTitle.setText("SPLAT");
         this.failDetail.setText(`Cause: ${state.failReason}`);
-        this.failHint.setText("Tap anywhere to run again. Double-tap left/right toggles AUTO.");
+        this.failHint.setText("Tap anywhere to run again. AUTO: double-left then double-right.");
       } else if (showMenu) {
         this.failTitle.setText("ZACK RUN");
         this.failDetail.setText("Single tap anywhere to start.");
-        this.failHint.setText("Touch right: jump. Touch left: duck/dive. Double-tap either side: AUTO.");
+        this.failHint.setText("Touch right: jump. Touch left: duck/dive. AUTO: double-left then double-right.");
       }
       const showTouchGuide = showMenu || (state.mode === "running" && state.time < TOUCH_GUIDE_HIDE_SECONDS);
       if (this.touchGuideEl) this.touchGuideEl.style.display = showTouchGuide ? "flex" : "none";
@@ -1863,6 +1979,31 @@
       }
     }
 
+    updateEagleFailPass(h, dt) {
+      const brushCenterX = state.player.x + 18;
+      const eagleCenterX = h.x + h.visibleW * 0.5;
+      if (!h.failSwoopPhase && h.x <= state.player.x + 220) {
+        h.failSwoopPhase = "dive";
+      }
+
+      if (h.failSwoopPhase === "dive") {
+        h.x -= Math.max(120, state.speed * 0.76 * (h.speedMul || 1)) * dt;
+        h.yBase += (FLOOR_Y - 34 - h.yBase) * Math.min(1, dt * 5.2);
+        h.flap += dt * 10.4;
+        if (!h.failSwoopDone && Math.abs(eagleCenterX - brushCenterX) <= 58) {
+          h.failSwoopDone = true;
+          this.triggerPlayerDeathJolt(0.92);
+        }
+        if (h.x <= state.player.x - 10) h.failSwoopPhase = "climb";
+        return;
+      }
+
+      h.failSwoopPhase = "climb";
+      h.x -= Math.max(110, state.speed * 0.88 * (h.speedMul || 1)) * dt;
+      h.yBase += (h.failCruiseYBase - h.yBase) * Math.min(1, dt * 2.4);
+      h.flap += dt * 9;
+    }
+
     spawnFailTumbleweed() {
       const hazard = this.createTumbleweedHazard(Math.random() < 0.5);
       const destX = WORLD_W + 80 + Math.random() * 160;
@@ -1873,11 +2014,34 @@
       state.hazards.push(hazard);
     }
 
+    spawnFailEagle() {
+      const hazard = this.createEagleHazard();
+      const destX = WORLD_W + 160 + Math.random() * 220;
+      const deltaX = destX - hazard.x;
+      hazard.x = destX;
+      hazard.speedMul = 0.92 + Math.random() * 0.22;
+      hazard.failSwoopPhase = "";
+      hazard.failSwoopDone = false;
+      this.positionHazardVisual(hazard, deltaX);
+      state.hazards.push(hazard);
+    }
+
     update(_time, deltaMs) {
       const dt = Math.min(deltaMs / 1000, 1 / 20);
       try {
+        if (IS_TOUCH_FULLSCREEN) {
+          this.viewportPollTimer = (this.viewportPollTimer || 0) - dt;
+          if (this.viewportPollTimer <= 0) {
+            this.viewportPollTimer = 0.22;
+            this.refreshViewportSizing();
+          }
+        }
+
         if (Phaser.Input.Keyboard.JustDown(this.keys.space) || Phaser.Input.Keyboard.JustDown(this.keys.up)) {
           input.jumpPressed = true;
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.keys.down) && state.player.onGround) {
+          state.player.crouchComboTimer = COMBO_JUMP_WINDOW_SECONDS;
         }
         input.jumpHeld =
           this.keys.space.isDown || this.keys.up.isDown || input.touchRightCount > 0;
@@ -1908,7 +2072,8 @@
 
             state.nextHazardIn -= dt;
             if (state.nextHazardIn <= 0) {
-              this.spawnFailTumbleweed();
+              if (Math.random() < 0.44) this.spawnFailEagle();
+              else this.spawnFailTumbleweed();
               state.nextHazardIn = 1.5 + Math.random() * 1.9;
             }
 
@@ -1925,8 +2090,7 @@
                 h.x -= state.speed * (h.speedMul || 1) * dt;
                 h.rotation += (h.spin || 0) * dt;
               } else if (h.type === "eagle") {
-                h.x -= state.speed * (h.speedMul || 1) * dt;
-                h.flap += dt * 9.2;
+                this.updateEagleFailPass(h, dt);
                 if (h.hitDrop > 0) h.hitDrop = Math.max(0, h.hitDrop - dt * 6);
               } else if (h.type === "snake") {
                 this.updateSnakeFailPasser(h, dt);
@@ -2089,7 +2253,8 @@
           const jumpedClear = p.y < FLOOR_Y - neededClearance;
 
           if (h.type === "eagle") {
-            const eagleUnsafe = overlapX && !p.duck && p.onGround;
+            const eagleClearByCombo = p.comboJumpActive && p.y < FLOOR_Y - EAGLE_COMBO_CLEARANCE;
+            const eagleUnsafe = overlapX && !(p.duck && p.onGround) && !eagleClearByCombo;
             if (eagleUnsafe) {
               this.fail("hit by an eagle", h);
               return;
@@ -2154,7 +2319,7 @@
       antialias: true,
     },
     scale: {
-      mode: IS_TOUCH_FULLSCREEN ? Phaser.Scale.ENVELOP : Phaser.Scale.FIT,
+      mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
       width: WORLD_W,
       height: WORLD_H,
