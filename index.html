@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Zack Run</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260220-1223" />
+    <link rel="stylesheet" href="./styles.css?v=20260220-1918" />
   </head>
   <body class="game-page">
     <section id="game-wrap" class="game-wrap" aria-label="Zack side scroller game area">
@@ -15,10 +15,14 @@
         <div id="hud-best">Best 0:00</div>
         <div id="hud-auto" class="hud-auto">AUTO</div>
       </div>
+      <div id="hud-build" class="hud-build" aria-hidden="true"></div>
+      <div id="touch-guide" class="touch-guide" aria-hidden="true">
+        <div class="touch-chip">Right Touch: Jump / Hold Higher</div>
+        <div class="touch-chip">Left Touch: Duck / Dive</div>
+      </div>
     </section>
-    <button id="start-btn" class="hidden-control" aria-label="Start or restart run">Start / Restart</button>
     <p id="status-text" class="hidden-control" aria-live="polite"></p>
     <script src="./vendor/phaser.min.js?v=3.90.0"></script>
-    <script src="./phaser-game.js?v=20260220-1223"></script>
+    <script src="./phaser-game.js?v=20260220-1918"></script>
   </body>
 </html>

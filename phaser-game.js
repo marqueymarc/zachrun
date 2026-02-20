@@ -1,27 +1,32 @@
 (() => {
-  const startBtn = document.getElementById("start-btn");
   const statusText = document.getElementById("status-text");
 
   const WORLD_W = 1920;
   const WORLD_H = 864;
+  const IS_TOUCH_FULLSCREEN = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   const FLOOR_Y = 655;
   const GRAVITY = 2500;
   const TARGET_SCORE = 12000;
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-1226";
+  const BUILD_ID = "2026-02-20-1918";
+  const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const AIR_JOY_CHANCE = 0.18;
   const CAMERA_BASE_SCREEN_X = WORLD_W * 0.27;
   const CAMERA_HEADWAY_SCREEN_X = WORLD_W * 0.4;
   const PLAYER_BASE_X = 320;
   const PLAYER_BASE_DISPLAY_W = 180;
   const PLAYER_BASE_DISPLAY_H = 250;
+  const DEATH_POSE_SIZE_BOOST = 1.5;
+  const DEATH_POSE_PERSPECTIVE_X = 1.12;
+  const DEATH_POSE_PERSPECTIVE_Y = 0.78;
+  const SNAKE_FAIL_RETREAT_DISTANCE = WORLD_W * 0.25;
   const PLAYER_VISUAL_SIZE_BIAS = {
     run1: 1,
     run2: 1,
     jump: 0.98,
-    joy: 1.12,
+    joy: 1.23,
     horror: 0.94,
   };
 
@@ -29,6 +34,8 @@
     jumpPressed: false,
     jumpHeld: false,
     diveHeld: false,
+    touchLeftCount: 0,
+    touchRightCount: 0,
   };
 
   const state = {
@@ -234,6 +241,7 @@
       this.load.image("jump", "./assets/zack/sprites/jump.png?v=1010");
       this.load.image("joy", "./assets/zack/sprites/joy.png?v=1010");
       this.load.image("horror", "./assets/zack/sprites/horror.png?v=1010");
+      this.load.image("horrorDeath", "./assets/zack/sprites/horror_death.png?v=20260220-1918");
       this.load.image("farBg", "./assets/zack/sprites/far_background_x.png");
       this.load.image("nearBg", "./assets/zack/sprites/near_background.png");
       this.load.image("clouds", "./assets/world/clouds.png");
@@ -259,12 +267,8 @@
       this.exposeDebugHooks();
 
       state.mode = "menu";
-      setStatus("Tap game area to start.");
+      setStatus("Tap anywhere to start.");
       this.refreshHud();
-
-      startBtn?.addEventListener("click", async () => {
-        await this.startOrRestartRun();
-      });
     }
 
     createLayers() {
@@ -303,7 +307,7 @@
         .setAlpha(0.36)
         .setTint(0xda9a79);
 
-      this.seamBlend = this.add.rectangle(WORLD_W * 0.5, WORLD_H - this.nearH - 3, WORLD_W + 120, 70, 0xe3a485, 0.1);
+      this.seamBlend = this.add.rectangle(WORLD_W * 0.5, WORLD_H - this.nearH - 3, WORLD_W + 140, 84, 0xe3a485, 0.14);
 
       const seamKey = "seamGradientBand";
       if (!this.textures.exists(seamKey)) {
@@ -319,6 +323,35 @@
         .image(WORLD_W * 0.5, WORLD_H - this.nearH - 6, seamKey)
         .setOrigin(0.5, 0.5)
         .setAlpha(0.5);
+
+      const seamNoiseKey = "seamNoiseBand";
+      if (!this.textures.exists(seamNoiseKey)) {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        const w = WORLD_W + 180;
+        const h = 110;
+        g.fillStyle(0xd68b6b, 0.16);
+        for (let i = 0; i < 420; i += 1) {
+          const x = Math.random() * w;
+          const y = Math.random() * h;
+          const r = 1 + Math.random() * 5;
+          g.fillCircle(x, y, r);
+        }
+        g.fillStyle(0x5a2f21, 0.08);
+        for (let i = 0; i < 260; i += 1) {
+          const x = Math.random() * w;
+          const y = Math.random() * h;
+          const rw = 2 + Math.random() * 14;
+          const rh = 1 + Math.random() * 4;
+          g.fillEllipse(x, y, rw, rh);
+        }
+        g.generateTexture(seamNoiseKey, w, h);
+        g.destroy();
+      }
+      this.seamNoise = this.add
+        .image(WORLD_W * 0.5, WORLD_H - this.nearH - 5, seamNoiseKey)
+        .setOrigin(0.5, 0.5)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.22);
 
       this.cloudSprites = state.clouds.map((c) =>
         this.add
@@ -340,29 +373,50 @@
     }
 
     createSplatTextures() {
-      const drawBlobTexture = (key, color, w, h, seed) => {
+      const drawBlobTexture = (key, color, accentColor, w, h, seed) => {
         if (this.textures.exists(key)) return;
         const g = this.make.graphics({ x: 0, y: 0, add: false });
         const centerX = w * 0.5;
         const centerY = h * 0.5;
+
+        const drawOrganicPool = (cx, cy, rx, ry, localSeed, wobbleAmp) => {
+          const steps = 32;
+          g.beginPath();
+          for (let i = 0; i <= steps; i += 1) {
+            const t = (i / steps) * Math.PI * 2;
+            const wobble =
+              1 +
+              Math.sin(t * 3.2 + localSeed) * wobbleAmp +
+              Math.cos(t * 5.1 - localSeed * 0.7) * wobbleAmp * 0.45 +
+              Math.sin(t * 7.4 + localSeed * 1.7) * wobbleAmp * 0.25;
+            const px = cx + Math.cos(t) * rx * wobble;
+            const py = cy + Math.sin(t) * ry * (0.9 + Math.sin(t * 2.6 + localSeed) * 0.08);
+            if (i === 0) g.moveTo(px, py);
+            else g.lineTo(px, py);
+          }
+          g.closePath();
+          g.fillPath();
+        };
+
         g.fillStyle(color, 1);
-        g.fillEllipse(centerX, centerY, w * 0.62, h * 0.5);
-        for (let i = 0; i < 8; i += 1) {
-          const a = (i / 8) * Math.PI * 2 + seed;
-          const rx = w * (0.28 + ((i * 17) % 9) * 0.012);
-          const ry = h * (0.18 + ((i * 13) % 7) * 0.01);
-          const r = 12 + ((i * 19) % 11);
-          g.fillCircle(centerX + Math.cos(a) * rx, centerY + Math.sin(a) * ry, r);
-        }
+        drawOrganicPool(centerX, centerY + h * 0.03, w * 0.39, h * 0.22, seed, 0.18);
+        drawOrganicPool(centerX - w * 0.19, centerY + h * 0.04, w * 0.13, h * 0.11, seed + 0.9, 0.22);
+        drawOrganicPool(centerX + w * 0.22, centerY + h * 0.05, w * 0.11, h * 0.1, seed + 1.8, 0.21);
+        drawOrganicPool(centerX - w * 0.01, centerY + h * 0.09, w * 0.2, h * 0.09, seed + 2.7, 0.2);
+
+        g.fillStyle(accentColor, 0.24);
+        g.fillEllipse(centerX - w * 0.1, centerY + h * 0.01, w * 0.34, h * 0.12);
+        g.fillEllipse(centerX + w * 0.07, centerY + h * 0.06, w * 0.26, h * 0.1);
+
         g.generateTexture(key, w, h);
         g.destroy();
       };
-      drawBlobTexture("splat-dark", 0x95161c, 420, 170, 0.4);
-      drawBlobTexture("splat-bright", 0xe4383f, 330, 130, 0.95);
+      drawBlobTexture("splat-dark", 0x95161c, 0xb2262e, 420, 170, 0.4);
+      drawBlobTexture("splat-bright", 0xe4383f, 0xff7a80, 330, 130, 0.95);
     }
 
     buildPlayerDisplayMap() {
-      const keys = ["run1", "run2", "jump", "joy", "horror"];
+      const keys = ["run1", "run2", "jump", "joy", "horror", "horrorDeath"];
       const samples = {};
       for (const key of keys) {
         samples[key] = this.sampleOpaqueBounds(key);
@@ -386,7 +440,7 @@
 
         let scale = targetVisibleH / Math.max(1, sample.visibleH);
         const scaledVisibleW = sample.visibleW * scale;
-        if (scaledVisibleW > maxVisibleW) scale = maxVisibleW / Math.max(1, sample.visibleW);
+        if (key !== "horrorDeath" && scaledVisibleW > maxVisibleW) scale = maxVisibleW / Math.max(1, sample.visibleW);
 
         const bottomPad = sample.bottomPad * scale;
         byKey[key] = {
@@ -462,44 +516,10 @@
       this.hudScoreEl = document.getElementById("hud-score");
       this.hudBestEl = document.getElementById("hud-best");
       this.hudAutoEl = document.getElementById("hud-auto");
-      if (this.hudScoreEl?.parentElement) this.hudScoreEl.parentElement.style.display = "none";
-      this.hudScoreCanvas = this.add
-        .text(26, 20, "Alive: 0:00", {
-          fontFamily: "Georgia",
-          fontSize: "56px",
-          fontStyle: "bold",
-          color: "#f3e5c6",
-          stroke: "#000000",
-          strokeThickness: 3,
-        })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setDepth(5100);
-      this.hudBestCanvas = this.add
-        .text(28, 84, "Best 0:00", {
-          fontFamily: "Georgia",
-          fontSize: "38px",
-          fontStyle: "bold",
-          color: "#d9e2ee",
-          stroke: "#000000",
-          strokeThickness: 3,
-        })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setDepth(5100);
-      this.hudAutoCanvas = this.add
-        .text(30, 132, "AUTO", {
-          fontFamily: "Georgia",
-          fontSize: "34px",
-          fontStyle: "bold",
-          color: "#ffd58a",
-          stroke: "#000000",
-          strokeThickness: 2,
-        })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setDepth(5100)
-        .setAlpha(0);
+      this.hudBuildEl = document.getElementById("hud-build");
+      this.touchGuideEl = document.getElementById("touch-guide");
+      this.gameWrapEl = document.getElementById("game-wrap");
+      if (this.hudBuildEl) this.hudBuildEl.textContent = `Build ${BUILD_ID}`;
 
       this.failTitle = this.add
         .text(WORLD_W * 0.5, 250, "SPLAT", {
@@ -527,7 +547,7 @@
         .setAlpha(0.88);
 
       this.failHint = this.add
-        .text(WORLD_W * 0.5, 368, "Press R, Enter, or tap to run again", {
+        .text(WORLD_W * 0.5, 368, "Tap anywhere to run again. Keyboard: R or Enter.", {
           fontFamily: "Georgia",
           fontSize: "30px",
           color: "#f0e7d3",
@@ -538,27 +558,39 @@
         .setVisible(false)
         .setAlpha(0.82);
 
-      this.buildText = this.add
-        .text(WORLD_W - 14, WORLD_H - 10, `Build ${BUILD_ID}`, {
-          fontFamily: "Georgia",
-          fontSize: "14px",
-          color: "#d6e0ee",
-        })
-        .setOrigin(1, 1)
-        .setScrollFactor(0)
-        .setDepth(5000)
-        .setAlpha(0.2);
-      this.tweens.add({
-        targets: this.buildText,
-        alpha: { from: 0.18, to: 0.78 },
-        duration: 620,
-        yoyo: true,
-        repeat: -1,
-        ease: "Sine.InOut",
-      });
     }
 
     bindInput() {
+      this.activeTouchSides = new Map();
+      this.sideFromClientX = (clientX) => {
+        const rect = this.gameWrapEl?.getBoundingClientRect();
+        if (!rect || rect.width <= 0) return clientX >= window.innerWidth * 0.5 ? "right" : "left";
+        return clientX - rect.left >= rect.width * 0.5 ? "right" : "left";
+      };
+      this.recomputeTouchHold = () => {
+        input.jumpHeld = input.touchRightCount > 0;
+        input.diveHeld = input.touchLeftCount > 0;
+      };
+      this.assignTouchSide = (pointerId, clientX) => {
+        const side = this.sideFromClientX(clientX);
+        const previous = this.activeTouchSides.get(pointerId);
+        if (previous === side) return;
+        if (previous === "left") input.touchLeftCount = Math.max(0, input.touchLeftCount - 1);
+        else if (previous === "right") input.touchRightCount = Math.max(0, input.touchRightCount - 1);
+        if (side === "left") input.touchLeftCount += 1;
+        else input.touchRightCount += 1;
+        this.activeTouchSides.set(pointerId, side);
+        this.recomputeTouchHold();
+      };
+      this.releaseTouchSide = (pointerId) => {
+        const previous = this.activeTouchSides.get(pointerId);
+        if (!previous) return;
+        if (previous === "left") input.touchLeftCount = Math.max(0, input.touchLeftCount - 1);
+        else input.touchRightCount = Math.max(0, input.touchRightCount - 1);
+        this.activeTouchSides.delete(pointerId);
+        this.recomputeTouchHold();
+      };
+
       this.keys = this.input.keyboard.addKeys({
         up: Phaser.Input.Keyboard.KeyCodes.UP,
         space: Phaser.Input.Keyboard.KeyCodes.SPACE,
@@ -596,26 +628,48 @@
         if (state.mode !== "running") this.startOrRestartRun();
       });
 
-      this.input.on("pointerdown", (pointer) => {
+      this.wrapPointerDown = (event) => {
+        event.preventDefault();
         if (state.mode !== "running") {
           this.startOrRestartRun();
           return;
         }
-        if (pointer.x > WORLD_W * 0.5) {
+        this.assignTouchSide(event.pointerId, event.clientX);
+        if (this.activeTouchSides.get(event.pointerId) === "right") {
           input.jumpPressed = true;
-          input.jumpHeld = true;
-        } else {
-          input.diveHeld = true;
         }
-      });
+      };
+      this.wrapPointerMove = (event) => {
+        event.preventDefault();
+        if (state.mode !== "running") return;
+        if (!this.activeTouchSides.has(event.pointerId)) return;
+        this.assignTouchSide(event.pointerId, event.clientX);
+      };
+      this.wrapPointerUp = (event) => {
+        this.releaseTouchSide(event.pointerId);
+      };
 
-      this.input.on("pointerup", () => {
-        input.jumpHeld = false;
-        input.diveHeld = false;
-      });
-      this.input.on("pointerupoutside", () => {
-        input.jumpHeld = false;
-        input.diveHeld = false;
+      if (this.gameWrapEl) {
+        this.gameWrapEl.style.touchAction = "none";
+        this.gameWrapEl.addEventListener("pointerdown", this.wrapPointerDown, { passive: false });
+        this.gameWrapEl.addEventListener("pointermove", this.wrapPointerMove, { passive: false });
+        this.gameWrapEl.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
+        this.gameWrapEl.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
+        this.gameWrapEl.addEventListener("pointerleave", this.wrapPointerUp, { passive: true });
+      }
+      window.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
+      window.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
+
+      this.events.once("shutdown", () => {
+        if (this.gameWrapEl) {
+          this.gameWrapEl.removeEventListener("pointerdown", this.wrapPointerDown);
+          this.gameWrapEl.removeEventListener("pointermove", this.wrapPointerMove);
+          this.gameWrapEl.removeEventListener("pointerup", this.wrapPointerUp);
+          this.gameWrapEl.removeEventListener("pointercancel", this.wrapPointerUp);
+          this.gameWrapEl.removeEventListener("pointerleave", this.wrapPointerUp);
+        }
+        window.removeEventListener("pointerup", this.wrapPointerUp);
+        window.removeEventListener("pointercancel", this.wrapPointerUp);
       });
     }
 
@@ -735,6 +789,10 @@
       p.driftTargetX = PLAYER_BASE_X;
       p.driftTimer = 1.8 + Math.random() * 0.9;
       p.driftRightPhase = true;
+      input.touchLeftCount = 0;
+      input.touchRightCount = 0;
+      if (this.activeTouchSides) this.activeTouchSides.clear();
+      this.recomputeTouchHold?.();
 
       setStatus(state.autoPlay ? "Autoplay ON (P toggles)." : "Run active.");
       this.refreshHud();
@@ -996,6 +1054,9 @@
         postFailPhase: "",
         postFailBites: 0,
         postFailTimer: 0,
+        postFailRetreatX: null,
+        flipX: false,
+        isFailKiller: false,
         sprite,
         shadow,
         baseScale: scale,
@@ -1010,7 +1071,12 @@
       const visibleH = tex.height * scale;
       const x = WORLD_W + 140;
       const yBase = FLOOR_Y - (220 + Math.random() * 34);
-      const shadow = this.add.image(x + visibleW * 0.5, FLOOR_Y + 16, "eagle1Shadow").setScale(scale * 0.64).setAlpha(1);
+      const shadow = this.add
+        .image(x + visibleW * 0.5, FLOOR_Y + 16, "eagle1Shadow")
+        .setScale(scale * 0.64)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.48)
+        .setTint(0x101010);
       const sprite = this.add.image(x + visibleW * 0.5, yBase, "eagle1").setScale(scale).setAlpha(0.94);
 
       return {
@@ -1109,6 +1175,7 @@
         if (h.sprite.texture.key !== tex) h.sprite.setTexture(tex);
         h.sprite.setPosition(centerX, centerY);
         h.sprite.setDisplaySize(drawW, drawH);
+        h.sprite.setFlipX(Boolean(h.flipX));
         h.sprite.setRotation(angle);
 
         h.shadow.setPosition(centerX, FLOOR_Y + 10);
@@ -1128,7 +1195,7 @@
         const shadowScale = (h.baseScale || 1) * clamp(1.02 - altitude / 520, 0.44, 0.8);
         h.shadow.setPosition(px + 12, FLOOR_Y + 16 + Math.max(0, altitude - 120) * 0.04);
         h.shadow.setScale(shadowScale * (1 + flap * 0.02));
-        h.shadow.setAlpha(1);
+        h.shadow.setAlpha(clamp(0.58 - altitude / 880, 0.24, 0.58));
         h.sprite.setRotation(flap * 0.08);
         h.sprite.setScale((h.baseScale || 1) * (1 + flap * 0.03));
         h.sprite.setPosition(px, py);
@@ -1186,6 +1253,10 @@
         decision: state.autoDebug.lastJumpDecision,
       }, true);
 
+      for (const h of state.hazards) {
+        if (h.type === "snake") h.isFailKiller = false;
+      }
+
       if (reason === "killed by a snake bite" && hitHazard) {
         const p = state.player;
         p.y = FLOOR_Y;
@@ -1196,14 +1267,18 @@
 
         hitHazard.x = state.player.x - hitHazard.visibleW * 0.38;
         hitHazard.yFloor = FLOOR_Y + 2;
-        hitHazard.isStriking = true;
-        hitHazard.strikeTimer = 0.34;
-        hitHazard.strikePhase = 1;
+        hitHazard.isStriking = false;
+        hitHazard.strikeTimer = 0;
+        hitHazard.strikePhase = 0;
         hitHazard.deathPose = true;
-        hitHazard.strikePause = 0.25;
+        hitHazard.speedMul = 0;
+        hitHazard.strikePause = 0.01;
         hitHazard.postFailPhase = "bite-near";
         hitHazard.postFailBites = 2;
         hitHazard.postFailTimer = 0;
+        hitHazard.postFailRetreatX = hitHazard.x + SNAKE_FAIL_RETREAT_DISTANCE;
+        hitHazard.flipX = false;
+        hitHazard.isFailKiller = true;
       }
 
       if (reason === "hit by an eagle") {
@@ -1223,7 +1298,7 @@
       state.camera.targetScreenX = CAMERA_BASE_SCREEN_X;
       state.nextHazardIn = 0.45;
 
-      setStatus(`Splat: ${reason}. Press R, Enter, or tap to restart.`);
+      setStatus(`Splat: ${reason}. Tap anywhere to run again. Keyboard: R or Enter.`);
       stopMusic();
       playFailWah();
       this.refreshHud();
@@ -1259,46 +1334,60 @@
       const tumbleweedKO = state.mode === "failed" && state.failReason === "hit a tumbleweed";
       const snakeKO = state.mode === "failed" && state.failReason === "killed by a snake bite";
       const eagleKO = state.mode === "failed" && state.failReason === "hit by an eagle";
+      const deathScaleX = DEATH_POSE_SIZE_BOOST * DEATH_POSE_PERSPECTIVE_X;
+      const deathScaleY = DEATH_POSE_SIZE_BOOST * DEATH_POSE_PERSPECTIVE_Y;
+      const deathRotation = -0.05;
+      const deathKey = "horrorDeath";
+      this.playerSprite.setVisible(true);
 
       if (tumbleweedKO) {
+        if (this.playerSprite.texture.key !== deathKey) this.playerSprite.setTexture(deathKey);
+        const deathSize = this.playerDisplayByKey?.[deathKey];
+        if (deathSize) this.playerSprite.setDisplaySize(deathSize.w, deathSize.h);
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (250 * 1.08) * 0.5 + 12;
         const splatX = clamp(p.x - 34 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(splatX, FLOOR_Y + 7);
-        this.playerSprite.setRotation(-Math.PI / 2);
-        this.playerSprite.setScale(normalizedScaleX * 0.72, normalizedScaleY * 1.08);
-        this.playerSplatBig.setPosition(splatX + 10, FLOOR_Y + 18);
-        this.playerSplatBig.setRotation(-0.08);
-        this.playerSplatBig.setDisplaySize(328, 84);
-        this.playerSplat.setPosition(splatX + 14, FLOOR_Y + 17);
-        this.playerSplat.setRotation(-0.08);
-        this.playerSplat.setDisplaySize(212, 44);
+        this.playerSprite.setPosition(splatX + 10, FLOOR_Y + 16);
+        this.playerSprite.setRotation(deathRotation);
+        this.playerSprite.setScale(normalizedScaleX * 0.9 * deathScaleX, normalizedScaleY * 0.9 * deathScaleY);
+        this.playerSplatBig.setPosition(splatX + 8, FLOOR_Y + 20);
+        this.playerSplatBig.setRotation(-0.11);
+        this.playerSplatBig.setDisplaySize(352, 70);
+        this.playerSplat.setPosition(splatX + 14, FLOOR_Y + 19);
+        this.playerSplat.setRotation(-0.11);
+        this.playerSplat.setDisplaySize(230, 36);
       } else if (snakeKO) {
+        if (this.playerSprite.texture.key !== deathKey) this.playerSprite.setTexture(deathKey);
+        const deathSize = this.playerDisplayByKey?.[deathKey];
+        if (deathSize) this.playerSprite.setDisplaySize(deathSize.w, deathSize.h);
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (250 * 1.04) * 0.5 + 12;
         const lieX = clamp(p.x - 12 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(lieX, FLOOR_Y + 8);
-        this.playerSprite.setRotation(-Math.PI / 2);
-        this.playerSprite.setScale(normalizedScaleX * 0.76, normalizedScaleY * 1.04);
-        this.playerSplatBig.setPosition(lieX + 12, FLOOR_Y + 18);
-        this.playerSplatBig.setRotation(-0.08);
-        this.playerSplatBig.setDisplaySize(292, 76);
-        this.playerSplat.setPosition(lieX + 16, FLOOR_Y + 17);
-        this.playerSplat.setRotation(-0.08);
-        this.playerSplat.setDisplaySize(186, 40);
+        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16);
+        this.playerSprite.setRotation(deathRotation);
+        this.playerSprite.setScale(normalizedScaleX * 0.96 * deathScaleX, normalizedScaleY * 0.94 * deathScaleY);
+        this.playerSplatBig.setPosition(lieX + 10, FLOOR_Y + 20);
+        this.playerSplatBig.setRotation(-0.1);
+        this.playerSplatBig.setDisplaySize(304, 68);
+        this.playerSplat.setPosition(lieX + 15, FLOOR_Y + 19);
+        this.playerSplat.setRotation(-0.1);
+        this.playerSplat.setDisplaySize(194, 35);
       } else if (eagleKO) {
+        if (this.playerSprite.texture.key !== deathKey) this.playerSprite.setTexture(deathKey);
+        const deathSize = this.playerDisplayByKey?.[deathKey];
+        if (deathSize) this.playerSprite.setDisplaySize(deathSize.w, deathSize.h);
         this.playerSprite.setOrigin(0.5, 0.5);
         const halfSpanX = (258 * 1.04) * 0.5 + 12;
         const lieX = clamp(p.x - 16 + 10, halfSpanX, WORLD_W - halfSpanX);
-        this.playerSprite.setPosition(lieX, FLOOR_Y + 8);
-        this.playerSprite.setRotation(-Math.PI / 2);
-        this.playerSprite.setScale(normalizedScaleX * 0.74, normalizedScaleY * 1.06);
-        this.playerSplatBig.setPosition(lieX + 12, FLOOR_Y + 19);
-        this.playerSplatBig.setRotation(-0.08);
-        this.playerSplatBig.setDisplaySize(312, 80);
-        this.playerSplat.setPosition(lieX + 16, FLOOR_Y + 18);
-        this.playerSplat.setRotation(-0.08);
-        this.playerSplat.setDisplaySize(196, 42);
+        this.playerSprite.setPosition(lieX + 12, FLOOR_Y + 16);
+        this.playerSprite.setRotation(deathRotation);
+        this.playerSprite.setScale(normalizedScaleX * 0.9 * deathScaleX, normalizedScaleY * 0.92 * deathScaleY);
+        this.playerSplatBig.setPosition(lieX + 10, FLOOR_Y + 20);
+        this.playerSplatBig.setRotation(-0.12);
+        this.playerSplatBig.setDisplaySize(324, 72);
+        this.playerSplat.setPosition(lieX + 15, FLOOR_Y + 19);
+        this.playerSplat.setRotation(-0.12);
+        this.playerSplat.setDisplaySize(204, 36);
       } else {
         this.playerSprite.setScale(normalizedScaleX, normalizedScaleY);
           if (!p.onGround && p.flipActive) {
@@ -1307,7 +1396,7 @@
             const desiredY = p.y + yOffset - halfH + 24;
             const minVisibleY = this.mainCam.scrollY + halfH + 10;
             this.playerSprite.setPosition(p.x, Math.max(desiredY, minVisibleY));
-            this.playerSprite.setScale(normalizedScaleX * 1.21, normalizedScaleY * 1.21);
+            this.playerSprite.setScale(normalizedScaleX, normalizedScaleY);
             const angle = Math.PI * 2 * Math.max(0, Math.min(1, p.flipProgress));
             this.playerSprite.setRotation(angle);
           } else {
@@ -1333,8 +1422,6 @@
       const bestText = `Best ${formatClock(state.best)}`;
       if (this.hudScoreEl) this.hudScoreEl.textContent = scoreText;
       if (this.hudBestEl) this.hudBestEl.textContent = bestText;
-      if (this.hudScoreCanvas) this.hudScoreCanvas.setText(scoreText);
-      if (this.hudBestCanvas) this.hudBestCanvas.setText(bestText);
       if (this.hudAutoEl) {
         if (state.autoPlay) {
           this.hudAutoEl.classList.add("hud-on");
@@ -1344,25 +1431,31 @@
           this.hudAutoEl.style.opacity = "0";
         }
       }
-      if (this.hudAutoCanvas) {
-        if (state.autoPlay) this.hudAutoCanvas.setAlpha(0.7 + Math.sin(state.time * 4.8) * 0.18);
-        else this.hudAutoCanvas.setAlpha(0);
-      }
 
       const showFail = state.mode === "failed";
-      this.failTitle.setVisible(showFail);
-      this.failDetail.setVisible(showFail);
-      this.failHint.setVisible(showFail);
+      const showMenu = state.mode === "menu";
+      const showOverlay = showFail || showMenu;
+      this.failTitle.setVisible(showOverlay);
+      this.failDetail.setVisible(showOverlay);
+      this.failHint.setVisible(showOverlay);
       if (showFail) {
         this.failTitle.setText("SPLAT");
         this.failDetail.setText(`Cause: ${state.failReason}`);
+        this.failHint.setText("Tap anywhere to run again. Keyboard: R or Enter.");
+      } else if (showMenu) {
+        this.failTitle.setText("ZACK RUN");
+        this.failDetail.setText("Single tap anywhere to start.");
+        this.failHint.setText("Touch right: jump. Touch left: duck/dive.");
       }
+      const showTouchGuide = showMenu || (state.mode === "running" && state.time < TOUCH_GUIDE_HIDE_SECONDS);
+      if (this.touchGuideEl) this.touchGuideEl.style.display = showTouchGuide ? "flex" : "none";
     }
 
     updateBackgroundLayers() {
+      const farSpeed = BACKGROUND_SCROLL_SPEED;
       const nearSpeed = BACKGROUND_SCROLL_SPEED * 2.6 + state.speed * 0.06;
-      const midSpeed = BACKGROUND_SCROLL_SPEED * 1.7 + state.speed * 0.028;
-      this.farLayer.tilePositionX = (state.sceneTime * BACKGROUND_SCROLL_SPEED) / this.farScale;
+      const midSpeed = farSpeed + (nearSpeed - farSpeed) * 0.54;
+      this.farLayer.tilePositionX = (state.sceneTime * farSpeed) / this.farScale;
       this.midLayer.tilePositionX = (state.sceneTime * midSpeed) / this.midScale;
       this.nearLayer.tilePositionX = (state.sceneTime * nearSpeed) / this.nearScale;
 
@@ -1396,36 +1489,53 @@
     updateSnakeFailKiller(killer, dt) {
       const anchorX = state.player.x - killer.visibleW * 0.38;
       killer.yFloor = FLOOR_Y + 2;
-      killer.deathPose = true;
+      killer.deathPose = killer.postFailPhase === "bite-near" || killer.postFailPhase === "bite-final";
 
       if (!killer.postFailPhase) {
         killer.postFailPhase = "bite-near";
         killer.postFailBites = 2;
+        killer.postFailRetreatX = anchorX + SNAKE_FAIL_RETREAT_DISTANCE;
+        killer.flipX = false;
       }
 
       if (killer.postFailPhase === "bite-near") {
         killer.x = anchorX;
+        killer.flipX = false;
+        killer.deathPose = true;
         this.advanceSnakeStrike(killer, dt);
         if (killer.postFailBites <= 0) {
-          killer.postFailPhase = "wander-right";
-          killer.postFailTimer = 1.25 + Math.random() * 0.35;
+          killer.postFailPhase = "retreat-right";
           killer.isStriking = false;
           killer.strikePhase = 0;
         }
-      } else if (killer.postFailPhase === "wander-right") {
-        killer.x += 118 * dt;
-        killer.postFailTimer -= dt;
+      } else if (killer.postFailPhase === "retreat-right") {
+        const retreatX = killer.postFailRetreatX ?? (anchorX + SNAKE_FAIL_RETREAT_DISTANCE);
+        killer.postFailRetreatX = retreatX;
+        killer.flipX = true;
+        killer.deathPose = false;
+        killer.x = Math.min(retreatX, killer.x + 156 * dt);
         killer.isStriking = false;
         killer.strikePhase = 0;
-        if (killer.postFailTimer <= 0) {
-          killer.postFailPhase = "bite-return";
-          killer.postFailBites = 2;
-          killer.strikePause = 0.12;
+        if (Math.abs(killer.x - retreatX) <= 2) {
+          killer.postFailPhase = "return-for-last";
         }
-      } else if (killer.postFailPhase === "bite-return") {
+      } else if (killer.postFailPhase === "return-for-last") {
         const targetX = anchorX + 14;
-        if (killer.x > targetX) killer.x = Math.max(targetX, killer.x - 180 * dt);
+        killer.flipX = false;
+        killer.deathPose = false;
+        if (killer.x > targetX) killer.x = Math.max(targetX, killer.x - 188 * dt);
         if (killer.x < targetX) killer.x = Math.min(targetX, killer.x + 180 * dt);
+        killer.isStriking = false;
+        killer.strikePhase = 0;
+        if (Math.abs(killer.x - targetX) <= 1.5) {
+          killer.postFailPhase = "bite-final";
+          killer.postFailBites = 1;
+          killer.strikePause = 0.08;
+        }
+      } else if (killer.postFailPhase === "bite-final") {
+        killer.x = anchorX + 14;
+        killer.flipX = false;
+        killer.deathPose = true;
         this.advanceSnakeStrike(killer, dt);
         if (killer.postFailBites <= 0) {
           killer.postFailPhase = "wander-left";
@@ -1433,6 +1543,8 @@
           killer.strikePhase = 0;
         }
       } else {
+        killer.flipX = false;
+        killer.deathPose = false;
         killer.x -= 132 * dt;
         killer.isStriking = false;
         killer.strikePhase = 0;
@@ -1454,10 +1566,10 @@
       try {
         if (Phaser.Input.Keyboard.JustDown(this.keys.space) || Phaser.Input.Keyboard.JustDown(this.keys.up)) {
           input.jumpPressed = true;
-          input.jumpHeld = true;
         }
-        if (this.keys.down.isDown) input.diveHeld = true;
-        else input.diveHeld = false;
+        input.jumpHeld =
+          this.keys.space.isDown || this.keys.up.isDown || input.touchRightCount > 0;
+        input.diveHeld = this.keys.down.isDown || input.touchLeftCount > 0;
 
         if (state.mode !== "running") {
           if (state.mode === "failed") {
@@ -1476,6 +1588,14 @@
             }
 
             for (const h of state.hazards) {
+              const isKillerSnake =
+                h.type === "snake" && state.failReason === "killed by a snake bite" && h.isFailKiller && h.id === state.hitHazardId;
+              if (isKillerSnake) {
+                this.updateSnakeFailKiller(h, dt);
+                this.updateHazardVisual(h);
+                continue;
+              }
+
               if (h.type === "tumbleweed") {
                 h.x -= state.speed * (h.speedMul || 1) * dt;
                 h.rotation += (h.spin || 0) * dt;
@@ -1487,14 +1607,6 @@
                 h.x -= state.speed * (h.speedMul || 1) * dt;
               }
               this.updateHazardVisual(h);
-            }
-
-            if (state.failReason === "killed by a snake bite" && state.hitHazardId !== null) {
-              const killer = state.hazards.find((h) => h.id === state.hitHazardId && h.type === "snake");
-              if (killer) {
-                this.updateSnakeFailKiller(killer, dt);
-                this.updateHazardVisual(killer);
-              }
             }
 
             state.hazards = state.hazards.filter((h) => {
@@ -1681,7 +1793,7 @@
           state.mode = "failed";
           state.failReason = "runtime error";
           state.player.expression = "horror";
-          setStatus(`Runtime error: ${state.lastError}. Press R, Enter, or tap to restart.`);
+          setStatus(`Runtime error: ${state.lastError}. Tap anywhere to run again. Keyboard: R or Enter.`);
         }
         this.updateBackgroundLayers();
         this.updatePlayerVisual();
@@ -1701,7 +1813,7 @@
       antialias: true,
     },
     scale: {
-      mode: Phaser.Scale.FIT,
+      mode: IS_TOUCH_FULLSCREEN ? Phaser.Scale.ENVELOP : Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
       width: WORLD_W,
       height: WORLD_H,

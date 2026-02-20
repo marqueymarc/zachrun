@@ -125,3 +125,17 @@ TODO
     - setting explicit render depths so Zack sprite is above red splat pool.
   - Eagle shadow handling updated to rely on PNG embedded transparency (removed runtime alpha dimming; keep alpha at 1).
   - Verified local runtime with automated capture on `?v=20260220-1223`; fail frame now clearly shows Zack + red pool.
+- 2026-02-20 19:22: iPhone touch/fullscreen + tap start/restart refinements
+  - Added coarse-pointer fullscreen behavior in CSS (`.game-wrap` fills `100vw x 100dvh`) and switched Phaser scale mode to `ENVELOP` on touch devices for full-screen presentation.
+  - Reworked pointer handling to DOM-level listeners on `#game-wrap` so left/right touch zones use screen position (not world coords), including active-pointer tracking for holds and movement updates.
+  - Single tap now starts from menu and restarts after fail (`state.mode !== "running"` starts run).
+  - Touch guide now auto-hides after ~4.2s during running; still visible on menu.
+  - Updated status/fail messaging to "Tap anywhere" wording; bumped build/cache IDs to `2026-02-20-1918` / `20260220-1918`.
+  - Validation:
+    - `node --check phaser-game.js` passes.
+    - local server verified with `curl -I http://127.0.0.1:5173` (`200 OK`) in persistent TTY session.
+    - Playwright web-game client snapshots/state:
+      - `output/web-game-build-20260220-1918/shot-0.png`
+      - `output/web-game-build-20260220-1918/state-0.json` (mode=running, score=5, build=2026-02-20-1918)
+      - `output/web-game-build-20260220-1918-restart/shot-0.png`
+      - `output/web-game-build-20260220-1918-restart/state-0.json` (mode=running after forced fail + tap restart sequence)

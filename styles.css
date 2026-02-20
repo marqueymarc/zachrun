@@ -40,6 +40,21 @@ body {
   color: #f3e5c6;
 }
 
+.hud-build {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 30;
+  pointer-events: none;
+  color: #d6e0ee;
+  opacity: 0.26;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  font-size: clamp(10px, 1.45vmin, 14px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  animation: hud-build-pulse 740ms ease-in-out infinite;
+}
+
 #hud-score {
   font-size: clamp(22px, 3.6vmin, 48px);
   font-weight: 700;
@@ -66,6 +81,18 @@ body {
   opacity: 0.9;
 }
 
+@keyframes hud-build-pulse {
+  0% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
 #game-root,
 #game-root canvas {
   display: block;
@@ -73,6 +100,47 @@ body {
   height: 100%;
   touch-action: none;
   user-select: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .game-page {
+    display: block;
+    width: 100vw;
+    height: 100dvh;
+    padding: 0;
+  }
+
+  .game-wrap {
+    width: 100vw;
+    height: 100dvh;
+    aspect-ratio: auto;
+  }
+}
+
+.touch-guide {
+  position: absolute;
+  left: 50%;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+  max-width: calc(100% - 16px);
+}
+
+.touch-chip {
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 225, 190, 0.46);
+  background: rgba(13, 12, 10, 0.56);
+  color: #f6e1be;
+  font-family: Georgia, serif;
+  font-size: clamp(11px, 1.7vmin, 15px);
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .hidden-control {
