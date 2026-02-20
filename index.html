@@ -4,14 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Zack Run</title>
-    <link rel="stylesheet" href="./styles.css?v=20260219-1256" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260220-1223" />
   </head>
   <body class="game-page">
-    <section class="game-wrap" aria-label="Zack side scroller game area">
-      <canvas id="game" width="1920" height="864" aria-label="Zack side scroller game"></canvas>
+    <section id="game-wrap" class="game-wrap" aria-label="Zack side scroller game area">
+      <div id="game-root" aria-label="Zack side scroller game"></div>
+      <div id="hud-overlay" class="hud-overlay" aria-live="polite">
+        <div id="hud-score">Alive: 0:00</div>
+        <div id="hud-best">Best 0:00</div>
+        <div id="hud-auto" class="hud-auto">AUTO</div>
+      </div>
     </section>
     <button id="start-btn" class="hidden-control" aria-label="Start or restart run">Start / Restart</button>
     <p id="status-text" class="hidden-control" aria-live="polite"></p>
-    <script src="./main.js?v=20260219-1256"></script>
+    <script src="./vendor/phaser.min.js?v=3.90.0"></script>
+    <script src="./phaser-game.js?v=20260220-1223"></script>
   </body>
 </html>

@@ -76,3 +76,52 @@ TODO
   - Strengthened autoplay timing with larger snake-safe jump window plus collision rescue cooldown to keep autoplay reliable despite zoom/pan + drift.
   - Build/version bumped to `2026-02-19-1241`; cache bust query updated to `20260219-1241`.
   - Live check: autoplay remained `mode=running` after 8s at high speed with active hazards (no fail).
+- 2026-02-19 15:30: Zack sprite normalization follow-up (joy sizing)
+  - Root cause: browser cache was still loading `phaser-game.js?v=20260219-1702` from `index.html`, so newer normalization tweaks were not guaranteed to load.
+  - Updated cache-bust params in `index.html` to `20260219-1730` for both CSS and JS.
+  - Added `PLAYER_VISUAL_SIZE_BIAS` map and applied it after per-texture normalization so all transforms are relative to normalized scale.
+  - Tuned key sprite biases: `jump 0.98`, `joy 0.90`, `horror 0.94` (`run1/run2` remain `1.0`) to reduce oversized airborne joy frame.
+  - Kept fail/duck transforms multiplicative on normalized scale so camera/pose transforms stay consistent.
+  - Node syntax check passed (`node --check phaser-game.js`).
+  - Automated run via web-game playwright client confirms build `2026-02-19-1730` is active and hazards run/fail loop still works.
+- 2026-02-20 10:10: fixed black automated screenshots (WebGL capture path)
+  - Root cause: Playwright game client captures canvas via `toDataURL`; with default WebGL buffer behavior this could return opaque black frames.
+  - Added Phaser renderer config in `phaser-game.js`:
+    - `render.preserveDrawingBuffer = true`
+    - `render.antialias = true`
+  - Bumped build id to `2026-02-20-1010` and cache-bust query params in `index.html`.
+  - Added `<link rel="icon" href="data:," />` to suppress favicon 404 noise during automated runs.
+  - Verified with fresh headless artifacts:
+    - `output/web-game-build-20260220-1010c/shot-0.png`
+    - `output/web-game-build-20260220-1010c/shot-1.png`
+    - `output/web-game-build-20260220-1010c/state-0.json`
+    - `output/web-game-build-20260220-1010c/state-1.json`
+  - Verification outcome: screenshots are fully rendered (non-black), game state advances, and no `errors-*.json` emitted in this run.
+- 2026-02-20 12:16: HUD/gameplay polish + post-hit hazard behavior
+  - Build bumped to `2026-02-20-1216`; cache-bust query in `index.html` updated to `20260220-1216`.
+  - HUD text switched to timer format: `Alive: m:ss` and `Best m:ss`.
+  - HUD now prefers DOM overlay (camera-independent) and only creates canvas HUD fallback when DOM is missing.
+  - Added robust fullscreen toggle path (`F`) with keyboard fallback via DOM Fullscreen API when Phaser fullscreen is unavailable.
+  - Increased joy sprite normalization (`PLAYER_VISUAL_SIZE_BIAS.joy = 1.12`) and increased flip scale (+10% from prior) to keep flips visually larger.
+  - Fixed invisible KO pool bug: splat ellipses now use non-zero fill alpha at creation; KO red pool now renders with stronger opacity.
+  - Tumbleweed shadow behavior adjusted to stay just below the weed and drift lower/wider only when bounce lift is high.
+  - Eagle shadows now project on the ground (not on bird body), with dynamic scale/alpha by altitude.
+  - Eagle hit behavior updated: after eagle collision/fail, eagle continues flight with slight impact drop rather than freezing.
+  - Snake post-kill behavior updated: bite near Zack, wander right, return for another bite phase, then wander off left.
+  - Validation:
+    - `node --check phaser-game.js` passes.
+    - local server verified via `curl -I http://127.0.0.1:5173` (`200 OK`) in persistent TTY session.
+    - automated runs via web-game client (build `2026-02-20-1216`) produced fresh screenshots/states without runtime errors:
+      - `output/web-game-build-20260220-1216-enter/*`
+      - `output/web-game-build-20260220-1216-long/*`
+      - `output/web-game-build-20260220-1216-verify/*`
+      - `output/web-game-build-20260220-1216-eaglecheck/*`
+      - `output/web-game-build-20260220-1216-eagleshadow/*`
+- 2026-02-20 12:23: HUD/death visibility + eagle shadow alpha fixes
+  - Fixed missing HUD by enabling DOM overlay in `/styles.css` (`.hud-overlay` was inadvertently `display: none`).
+  - Bumped build to `2026-02-20-1223`; cache-bust query updated to `20260220-1223` in `index.html`.
+  - Fixed missing Zack on death by:
+    - forcing full-body texture (`run1`) for failed pose,
+    - setting explicit render depths so Zack sprite is above red splat pool.
+  - Eagle shadow handling updated to rely on PNG embedded transparency (removed runtime alpha dimming; keep alpha at 1).
+  - Verified local runtime with automated capture on `?v=20260220-1223`; fail frame now clearly shows Zack + red pool.
