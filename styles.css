@@ -140,6 +140,32 @@ body {
   max-width: calc(100% - 16px);
 }
 
+.sound-toggle {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  z-index: 45;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 225, 190, 0.5);
+  background: rgba(13, 12, 10, 0.56);
+  color: #f6e1be;
+  font-size: 21px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.sound-toggle.is-muted {
+  opacity: 0.72;
+}
+
 .touch-chip {
   padding: 7px 10px;
   border-radius: 999px;

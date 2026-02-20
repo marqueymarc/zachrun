@@ -14,10 +14,12 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2132";
+  const BUILD_ID = "2026-02-20-2149";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
+  const SWIPE_TRIGGER_PX = 34;
+  const SWIPE_VERTICAL_RATIO = 1.15;
   const COMBO_JUMP_WINDOW_SECONDS = 0.45;
   const NORMAL_JUMP_VELOCITY = -980;
   const AUTO_JUMP_VELOCITY = -1160;
@@ -121,6 +123,7 @@
     musicStep: 0,
     audioPrimed: false,
     musicShouldPlay: false,
+    soundMuted: false,
     autoDebug: {
       enabled: true,
       lastLogAt: -999,
@@ -224,7 +227,7 @@
     state.audioReady = true;
 
     const musicGain = ac.createGain();
-    musicGain.gain.value = 0.14;
+    musicGain.gain.value = state.soundMuted ? 0.00001 : 0.22;
     musicGain.connect(ac.destination);
     state.musicGain = musicGain;
     ac.onstatechange = () => {
@@ -232,6 +235,23 @@
       primeAudioContext();
       if (state.musicShouldPlay && state.mode === "running") startMusic();
     };
+  }
+
+  function applySoundState(immediate = false) {
+    if (!state.musicGain || !state.audioCtx) return;
+    const target = state.soundMuted ? 0.00001 : 0.22;
+    if (immediate) state.musicGain.gain.setValueAtTime(target, state.audioCtx.currentTime);
+    else state.musicGain.gain.setTargetAtTime(target, state.audioCtx.currentTime, 0.04);
+  }
+
+  function setSoundMuted(muted, immediate = false) {
+    state.soundMuted = Boolean(muted);
+    try {
+      window.localStorage?.setItem("zackrun-muted", state.soundMuted ? "1" : "0");
+    } catch (_error) {
+      // Ignore storage failures in private/locked modes.
+    }
+    applySoundState(immediate);
   }
 
   function primeAudioContext() {
@@ -256,10 +276,11 @@
     state.musicShouldPlay = true;
     if (!state.audioReady || !state.audioCtx || state.audioCtx.state !== "running" || state.musicTimerId) return;
     if (state.musicGain && state.audioCtx) {
-      state.musicGain.gain.setTargetAtTime(0.14, state.audioCtx.currentTime, 0.06);
+      applySoundState();
     }
     const tick = () => {
       if (state.mode !== "running") return;
+      if (state.soundMuted) return;
       const i = state.musicStep % state.musicPattern.length;
       const root = state.musicPattern[i];
       playPianoNote(root, 0.22, 0.11);
@@ -282,7 +303,7 @@
   }
 
   function playFailWah() {
-    if (!state.audioCtx) return;
+    if (!state.audioCtx || state.soundMuted) return;
     const ac = state.audioCtx;
     const gain = ac.createGain();
     gain.gain.value = 0.13;
@@ -725,6 +746,7 @@
       this.hudBestEl = document.getElementById("hud-best");
       this.hudAutoEl = document.getElementById("hud-auto");
       this.hudBuildEl = document.getElementById("hud-build");
+      this.soundToggleEl = document.getElementById("sound-toggle");
       this.touchGuideEl = document.getElementById("touch-guide");
       this.rotateOverlayEl = document.getElementById("rotate-overlay");
       this.rotateOverlayTextEl = document.getElementById("rotate-overlay-text");
@@ -736,6 +758,25 @@
       this.lastViewportH = 0;
       this.bindViewportSync();
       this.refreshViewportSizing(true);
+      try {
+        state.soundMuted = window.localStorage?.getItem("zackrun-muted") === "1";
+      } catch (_error) {
+        state.soundMuted = false;
+      }
+      setSoundMuted(state.soundMuted, true);
+      this.refreshSoundToggle();
+      if (this.soundToggleEl) {
+        this.soundToggleHandler = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          this.unlockAudioFromGesture();
+          setSoundMuted(!state.soundMuted);
+          if (!state.soundMuted && state.mode === "running") startMusic();
+          this.refreshSoundToggle();
+        };
+        this.soundToggleEl.addEventListener("pointerdown", this.soundToggleHandler, { passive: false });
+        this.soundToggleEl.addEventListener("click", this.soundToggleHandler, { passive: false });
+      }
       if (this.hudBuildEl) this.hudBuildEl.textContent = `Build ${BUILD_ID}`;
       if (this.rotateOverlayTextEl && IS_TOUCH_FULLSCREEN && !IS_STANDALONE_APP) {
         this.rotateOverlayTextEl.textContent = "Rotate to landscape. For true full screen, Add to Home Screen and open Zack Run from there.";
@@ -778,6 +819,18 @@
         .setVisible(false)
         .setAlpha(0.82);
 
+      this.events.once("shutdown", () => {
+        if (!this.soundToggleEl || !this.soundToggleHandler) return;
+        this.soundToggleEl.removeEventListener("pointerdown", this.soundToggleHandler);
+        this.soundToggleEl.removeEventListener("click", this.soundToggleHandler);
+      });
+    }
+
+    refreshSoundToggle() {
+      if (!this.soundToggleEl) return;
+      this.soundToggleEl.textContent = state.soundMuted ? "🔇" : "🔊";
+      this.soundToggleEl.setAttribute("aria-label", state.soundMuted ? "Unmute sound" : "Mute sound");
+      this.soundToggleEl.classList.toggle("is-muted", state.soundMuted);
     }
 
     toggleAutoPlay() {
@@ -791,6 +844,7 @@
       if (!state.audioCtx) return;
       const onRunning = () => {
         primeAudioContext();
+        if (!state.soundMuted) playPianoNote(79, 0.04, 0.02);
         if (state.mode === "running" && state.musicShouldPlay) startMusic();
       };
       if (state.audioCtx.state === "running") {
@@ -876,35 +930,25 @@
     }
 
     bindInput() {
-      this.activeTouchSides = new Map();
+      this.activeTouchGestures = new Map();
+      this.activeDiveSwipes = new Set();
+      this.pointerDiveHeld = false;
       this.lastTapAtBySide = { left: -999999, right: -999999 };
       this.sideFromClientX = (clientX) => {
         const rect = this.gameWrapEl?.getBoundingClientRect();
         if (!rect || rect.width <= 0) return clientX >= window.innerWidth * 0.5 ? "right" : "left";
         return clientX - rect.left >= rect.width * 0.5 ? "right" : "left";
       };
+      this.recomputeSwipeDive = () => {
+        this.pointerDiveHeld = this.activeDiveSwipes.size > 0;
+      };
       this.recomputeTouchHold = () => {
         input.jumpHeld = input.touchRightCount > 0;
-        input.diveHeld = input.touchLeftCount > 0;
+        input.diveHeld = input.touchLeftCount > 0 || this.pointerDiveHeld;
       };
-      this.assignTouchSide = (pointerId, clientX) => {
-        const side = this.sideFromClientX(clientX);
-        const previous = this.activeTouchSides.get(pointerId);
-        if (previous === side) return;
-        if (previous === "left") input.touchLeftCount = Math.max(0, input.touchLeftCount - 1);
-        else if (previous === "right") input.touchRightCount = Math.max(0, input.touchRightCount - 1);
-        if (side === "left") input.touchLeftCount += 1;
-        else input.touchRightCount += 1;
-        this.activeTouchSides.set(pointerId, side);
-        this.recomputeTouchHold();
-      };
-      this.releaseTouchSide = (pointerId) => {
-        const previous = this.activeTouchSides.get(pointerId);
-        if (!previous) return;
-        if (previous === "left") input.touchLeftCount = Math.max(0, input.touchLeftCount - 1);
-        else input.touchRightCount = Math.max(0, input.touchRightCount - 1);
-        this.activeTouchSides.delete(pointerId);
-        this.recomputeTouchHold();
+      this.releaseSwipeState = (pointerId) => {
+        if (this.activeDiveSwipes.delete(pointerId)) this.recomputeSwipeDive();
+        this.activeTouchGestures.delete(pointerId);
       };
 
       this.keys = this.input.keyboard.addKeys({
@@ -954,7 +998,6 @@
           if (side === "left") {
             this.autoTapSequencePhase = 1;
             this.autoTapSequenceUntil = now + AUTO_TAP_SEQUENCE_WINDOW_MS;
-            setStatus("AUTO gesture armed: double-tap right now.");
             return;
           }
           if (side === "right" && this.autoTapSequencePhase === 1 && now <= this.autoTapSequenceUntil) {
@@ -969,22 +1012,49 @@
           this.startOrRestartRun();
           return;
         }
-        this.assignTouchSide(event.pointerId, event.clientX);
-        if (this.activeTouchSides.get(event.pointerId) === "left" && state.player.onGround) {
-          state.player.crouchComboTimer = COMBO_JUMP_WINDOW_SECONDS;
-        }
-        if (this.activeTouchSides.get(event.pointerId) === "right") {
-          input.jumpPressed = true;
-        }
+        this.activeTouchGestures.set(event.pointerId, {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          side,
+          swipe: "none",
+          jumpFired: false,
+        });
       };
       this.wrapPointerMove = (event) => {
         event.preventDefault();
         if (state.mode !== "running") return;
-        if (!this.activeTouchSides.has(event.pointerId)) return;
-        this.assignTouchSide(event.pointerId, event.clientX);
+        const g = this.activeTouchGestures.get(event.pointerId);
+        if (!g) return;
+        const dx = event.clientX - g.startX;
+        const dy = event.clientY - g.startY;
+        const absX = Math.abs(dx);
+        const absY = Math.abs(dy);
+        if (absY < SWIPE_TRIGGER_PX || absY < absX * SWIPE_VERTICAL_RATIO) return;
+
+        if (dy > 0) {
+          if (g.swipe !== "down") {
+            g.swipe = "down";
+            this.activeDiveSwipes.add(event.pointerId);
+            this.recomputeSwipeDive();
+          }
+          if (state.player.onGround) {
+            state.player.crouchComboTimer = Math.max(state.player.crouchComboTimer, COMBO_JUMP_WINDOW_SECONDS);
+          }
+        } else {
+          if (g.swipe === "down") {
+            this.activeDiveSwipes.delete(event.pointerId);
+            this.recomputeSwipeDive();
+          }
+          g.swipe = "up";
+          if (!g.jumpFired) {
+            g.jumpFired = true;
+            input.jumpPressed = true;
+          }
+        }
       };
       this.wrapPointerUp = (event) => {
-        this.releaseTouchSide(event.pointerId);
+        this.releaseSwipeState(event.pointerId);
       };
 
       if (this.gameWrapEl) {
@@ -1021,6 +1091,9 @@
         }
         window.removeEventListener("pointerup", this.wrapPointerUp);
         window.removeEventListener("pointercancel", this.wrapPointerUp);
+        this.activeTouchGestures.clear();
+        this.activeDiveSwipes.clear();
+        this.pointerDiveHeld = false;
       });
     }
 
@@ -1157,7 +1230,9 @@
       p.deathJoltVelocity = 0;
       input.touchLeftCount = 0;
       input.touchRightCount = 0;
-      if (this.activeTouchSides) this.activeTouchSides.clear();
+      if (this.activeTouchGestures) this.activeTouchGestures.clear();
+      if (this.activeDiveSwipes) this.activeDiveSwipes.clear();
+      this.pointerDiveHeld = false;
       this.recomputeTouchHold?.();
 
       setStatus(state.autoPlay ? "Autoplay ON (P toggles)." : "Run active.");
@@ -1333,6 +1408,8 @@
       const playerRight = p.x + p.width * 0.25;
       for (const h of state.hazards) {
         if (h.type !== "eagle") continue;
+        if (!h.autoAction) h.autoAction = Math.random() < 0.32 ? "jump" : "duck";
+        if (h.autoAction !== "duck") continue;
         const speed = Math.max(120, state.speed * (h.speedMul || 1));
         const tFront = (h.x - playerRight) / speed;
         const tBack = (h.x + (h.visibleW || 120) - playerLeft) / speed;
@@ -1354,11 +1431,38 @@
       return false;
     }
 
+    getAutoEagleJumpDecision() {
+      const p = state.player;
+      if (!state.autoPlay || state.mode !== "running" || !p.onGround) return null;
+      const playerLeft = p.x - p.width * 0.25;
+      const playerRight = p.x + p.width * 0.25;
+      for (const h of state.hazards) {
+        if (h.type !== "eagle") continue;
+        if (!h.autoAction) h.autoAction = Math.random() < 0.32 ? "jump" : "duck";
+        if (h.autoAction !== "jump") continue;
+        const speed = Math.max(120, state.speed * (h.speedMul || 1));
+        const tFront = (h.x - playerRight) / speed;
+        const tBack = (h.x + (h.visibleW || 120) - playerLeft) / speed;
+        if (tBack < -0.06 || tFront > 0.62) continue;
+        const decision = {
+          hazardId: h.id,
+          type: "eagle",
+          tFront: Number(tFront.toFixed(3)),
+          tBack: Number(tBack.toFixed(3)),
+          armCombo: tFront <= 0.34 && tBack >= -0.02,
+          triggerJump: tFront <= 0.2 && tBack >= -0.05,
+        };
+        pushAutoLog("eagle-jump-check", decision);
+        return decision;
+      }
+      return null;
+    }
+
     createTumbleweedHazard(useFirst, forceBig = false) {
       const key = useFirst ? "tumble1" : "tumble2";
       const tex = this.textures.get(key).getSourceImage();
       const sizeRamp = Math.min(0.18, state.time / 95);
-      const isBig = forceBig || (!state.autoPlay && state.hazardsSpawned > 4 && Math.random() < 0.16);
+      const isBig = forceBig || (state.hazardsSpawned > 3 && Math.random() < (state.autoPlay ? 0.14 : 0.22));
       const sizeBoost = isBig ? 1.5 + Math.random() * 0.18 : 1;
       const scale = (0.54 + Math.random() * 0.42) * (1 + sizeRamp) * sizeBoost;
       const visibleW = tex.width * scale;
@@ -1454,7 +1558,12 @@
         .setAlpha(0.48)
         .setTint(0x101010)
         .setDepth(HAZARD_SHADOW_DEPTH);
-      const sprite = this.add.image(x + visibleW * 0.5, yBase, "eagle1").setScale(scale).setAlpha(0.94).setDepth(HAZARD_BODY_DEPTH);
+      const sprite = this.add
+        .image(x + visibleW * 0.5, yBase - visibleH * 0.5, "eagle1")
+        .setOrigin(0.5, 0)
+        .setScale(scale)
+        .setAlpha(0.94)
+        .setDepth(HAZARD_BODY_DEPTH);
 
       return {
         id: ++state.hazardIdSeq,
@@ -1471,8 +1580,10 @@
         flap: Math.random() * Math.PI * 2,
         bobPhase: Math.random() * Math.PI * 2,
         hitDrop: 0,
+        autoAction: "",
         failSwoopPhase: "",
         failSwoopDone: false,
+        failSwoopEnabled: Math.random() < 0.52,
         failCruiseYBase: yBase,
         baseScale: scale,
         sprite,
@@ -1579,7 +1690,7 @@
         h.shadow.setAlpha(clamp(0.58 - altitude / 880, 0.24, 0.58));
         h.sprite.setRotation(flap * 0.08);
         h.sprite.setScale((h.baseScale || 1) * (1 + flap * 0.03));
-        h.sprite.setPosition(px, py);
+        h.sprite.setPosition(px, py - h.visibleH * 0.5);
       } else {
         const bounce = this.getHazardBounce(h);
         const px = h.x + h.visibleW * 0.5;
@@ -1806,6 +1917,7 @@
     }
 
     refreshHud() {
+      this.refreshSoundToggle();
       const scoreText = `Alive: ${formatClock(state.score)}`;
       const bestText = `Best ${formatClock(state.best)}`;
       if (this.hudScoreEl) this.hudScoreEl.textContent = scoreText;
@@ -1829,11 +1941,11 @@
       if (showFail) {
         this.failTitle.setText("SPLAT");
         this.failDetail.setText(`Cause: ${state.failReason}`);
-        this.failHint.setText("Tap anywhere to run again. AUTO: double-left then double-right.");
+        this.failHint.setText("Tap anywhere to run again.");
       } else if (showMenu) {
         this.failTitle.setText("ZACK RUN");
         this.failDetail.setText("Single tap anywhere to start.");
-        this.failHint.setText("Touch right: jump. Touch left: duck/dive. AUTO: double-left then double-right.");
+        this.failHint.setText("Swipe up: jump. Swipe down: duck/dive.");
       }
       const showTouchGuide = showMenu || (state.mode === "running" && state.time < TOUCH_GUIDE_HIDE_SECONDS);
       if (this.touchGuideEl) this.touchGuideEl.style.display = showTouchGuide ? "flex" : "none";
@@ -1982,6 +2094,12 @@
     updateEagleFailPass(h, dt) {
       const brushCenterX = state.player.x + 18;
       const eagleCenterX = h.x + h.visibleW * 0.5;
+      if (!h.failSwoopEnabled) {
+        h.x -= Math.max(110, state.speed * 0.9 * (h.speedMul || 1)) * dt;
+        h.yBase += (h.failCruiseYBase - h.yBase) * Math.min(1, dt * 2);
+        h.flap += dt * 9;
+        return;
+      }
       if (!h.failSwoopPhase && h.x <= state.player.x + 220) {
         h.failSwoopPhase = "dive";
       }
@@ -2022,6 +2140,7 @@
       hazard.speedMul = 0.92 + Math.random() * 0.22;
       hazard.failSwoopPhase = "";
       hazard.failSwoopDone = false;
+      hazard.failSwoopEnabled = Math.random() < 0.52;
       this.positionHazardVisual(hazard, deltaX);
       state.hazards.push(hazard);
     }
@@ -2045,7 +2164,10 @@
         }
         input.jumpHeld =
           this.keys.space.isDown || this.keys.up.isDown || input.touchRightCount > 0;
-        input.diveHeld = this.keys.down.isDown || input.touchLeftCount > 0;
+        input.diveHeld = this.keys.down.isDown || input.touchLeftCount > 0 || this.pointerDiveHeld;
+        if (state.mode === "running" && state.musicShouldPlay && state.audioCtx?.state === "running" && !state.musicTimerId) {
+          startMusic();
+        }
 
         if (state.mode !== "running") {
           if (state.mode === "failed") {
@@ -2128,7 +2250,13 @@
         if (state.autoPlay) {
           const jumpDecision = this.getAutoJumpDecision();
           if (jumpDecision?.shouldJump) input.jumpPressed = true;
-          input.diveHeld = input.diveHeld || this.shouldAutoDuck();
+          const eagleJump = this.getAutoEagleJumpDecision();
+          if (eagleJump?.armCombo) {
+            input.diveHeld = true;
+            if (eagleJump.triggerJump) input.jumpPressed = true;
+          } else {
+            input.diveHeld = input.diveHeld || this.shouldAutoDuck();
+          }
         }
 
         const crouchingNow = p.onGround && input.diveHeld;
@@ -2143,7 +2271,7 @@
         p.duck = crouchingNow;
 
         if (input.jumpPressed && p.onGround) {
-          const comboJump = !state.autoPlay && (p.crouchComboTimer > 0.01 || crouchingNow);
+          const comboJump = p.crouchComboTimer > 0.01 || crouchingNow;
           p.vy = comboJump ? COMBO_JUMP_VELOCITY : state.autoPlay ? AUTO_JUMP_VELOCITY : NORMAL_JUMP_VELOCITY;
           p.onGround = false;
           p.airSprite = Math.random() < AIR_JOY_CHANCE ? "joy" : "jump";
