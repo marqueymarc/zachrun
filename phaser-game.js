@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-21-2210";
+  const BUILD_ID = "2026-02-21-2246";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -27,6 +27,8 @@
   const EAGLE_COMBO_CLEARANCE = 168;
   const EAGLE_JUMP_CLEARANCE = 96;
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
+  const FAIL_WIND_TRACK_URL = "./assets/world/tanweraman-desert-wind-1-350398.mp3";
+  const FAIL_WIND_TRACK_VOLUME = 0.46;
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -130,6 +132,17 @@
     audioPrimed: false,
     musicShouldPlay: false,
     soundMuted: false,
+    failWindActive: false,
+    failWindTimerId: null,
+    failWindTrack: null,
+    failWindTrackReady: false,
+    failWindUsingTrack: false,
+    lastFailWindError: "",
+    audioUnlockAttempts: 0,
+    audioUnlockSuccesses: 0,
+    audioUnlockFailures: 0,
+    lastAudioUnlockAt: 0,
+    lastAudioUnlockError: "",
     autoDebug: {
       enabled: true,
       lastLogAt: -999,
@@ -244,11 +257,49 @@
     };
   }
 
+  function ensureFailWindTrack() {
+    if (state.failWindTrack || typeof Audio === "undefined") return state.failWindTrack;
+    try {
+      const track = new Audio(`${FAIL_WIND_TRACK_URL}?v=${BUILD_ID}`);
+      track.loop = true;
+      track.preload = "auto";
+      track.playsInline = true;
+      track.muted = Boolean(state.soundMuted);
+      track.volume = state.soundMuted ? 0 : FAIL_WIND_TRACK_VOLUME;
+      track.addEventListener("canplaythrough", () => {
+        state.failWindTrackReady = true;
+      });
+      track.addEventListener("error", () => {
+        state.lastFailWindError = "Failed to load fail wind track.";
+      });
+      state.failWindTrack = track;
+    } catch (error) {
+      state.lastFailWindError = String(error?.message || error || "Failed to create fail wind track.");
+      state.failWindTrack = null;
+    }
+    return state.failWindTrack;
+  }
+
   function applySoundState(immediate = false) {
-    if (!state.musicGain || !state.audioCtx) return;
-    const target = state.soundMuted ? 0.00001 : 0.22;
-    if (immediate) state.musicGain.gain.setValueAtTime(target, state.audioCtx.currentTime);
-    else state.musicGain.gain.setTargetAtTime(target, state.audioCtx.currentTime, 0.04);
+    if (state.musicGain && state.audioCtx) {
+      const target = state.soundMuted ? 0.00001 : 0.22;
+      if (immediate) state.musicGain.gain.setValueAtTime(target, state.audioCtx.currentTime);
+      else state.musicGain.gain.setTargetAtTime(target, state.audioCtx.currentTime, 0.04);
+    }
+    if (state.failWindTrack) {
+      state.failWindTrack.muted = Boolean(state.soundMuted);
+      state.failWindTrack.volume = state.soundMuted ? 0 : FAIL_WIND_TRACK_VOLUME;
+      if (state.soundMuted && !state.failWindTrack.paused) state.failWindTrack.pause();
+      if (!state.soundMuted && state.failWindActive && state.failWindTrack.paused) {
+        const playAttempt = state.failWindTrack.play();
+        if (playAttempt?.catch) {
+          playAttempt.catch((error) => {
+            state.failWindUsingTrack = false;
+            state.lastFailWindError = String(error?.message || error || "Failed to play fail wind track.");
+          });
+        }
+      }
+    }
   }
 
   function setSoundMuted(muted, immediate = false) {
@@ -307,6 +358,120 @@
     if (state.musicGain && state.audioCtx) {
       state.musicGain.gain.setTargetAtTime(0, state.audioCtx.currentTime, 0.03);
     }
+  }
+
+  function clearFailWindTimer() {
+    if (!state.failWindTimerId) return;
+    window.clearTimeout(state.failWindTimerId);
+    state.failWindTimerId = null;
+  }
+
+  function scheduleFailWindWhistle() {
+    clearFailWindTimer();
+    if (!state.failWindActive) return;
+    const delayMs = 260 + Math.random() * 1100;
+    state.failWindTimerId = window.setTimeout(() => {
+      state.failWindTimerId = null;
+      if (!state.failWindActive) return;
+      playFailWindWhistle();
+      scheduleFailWindWhistle();
+    }, delayMs);
+  }
+
+  function startFailWind() {
+    state.failWindActive = true;
+    const track = ensureFailWindTrack();
+    if (track && !state.soundMuted) {
+      state.failWindUsingTrack = true;
+      track.muted = false;
+      track.volume = FAIL_WIND_TRACK_VOLUME;
+      if (track.paused) {
+        try {
+          track.currentTime = 0;
+        } catch (_error) {
+          // Ignore seek failures before metadata is available.
+        }
+        const playAttempt = track.play();
+        if (playAttempt?.then) {
+          playAttempt
+            .then(() => {
+              state.failWindUsingTrack = true;
+              state.lastFailWindError = "";
+            })
+            .catch((error) => {
+              state.failWindUsingTrack = false;
+              state.lastFailWindError = String(error?.message || error || "Failed to play fail wind track.");
+              playFailWindWhistle();
+              scheduleFailWindWhistle();
+            });
+        }
+      }
+      clearFailWindTimer();
+      return;
+    }
+    state.failWindUsingTrack = false;
+    playFailWindWhistle();
+    scheduleFailWindWhistle();
+  }
+
+  function stopFailWind() {
+    state.failWindActive = false;
+    state.failWindUsingTrack = false;
+    if (state.failWindTrack) {
+      if (!state.failWindTrack.paused) state.failWindTrack.pause();
+      try {
+        state.failWindTrack.currentTime = 0;
+      } catch (_error) {
+        // Ignore seek failures when track metadata is not ready.
+      }
+    }
+    clearFailWindTimer();
+  }
+
+  function playFailWindWhistle() {
+    if (!state.audioCtx || state.soundMuted || state.audioCtx.state !== "running") return;
+    const ac = state.audioCtx;
+    const now = ac.currentTime;
+    const length = 0.45 + Math.random() * 1.05;
+    const baseHz = 240 + Math.random() * 220;
+    const peakHz = baseHz + 170 + Math.random() * 320;
+    const tailHz = Math.max(120, baseHz - (50 + Math.random() * 90));
+    const level = 0.055 + Math.random() * 0.065;
+
+    const osc = ac.createOscillator();
+    osc.type = Math.random() < 0.5 ? "sine" : "triangle";
+    const gain = ac.createGain();
+    const filter = ac.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(peakHz * 0.9, now);
+    filter.Q.setValueAtTime(3.8 + Math.random() * 6.4, now);
+
+    if (ac.createStereoPanner) {
+      const pan = ac.createStereoPanner();
+      pan.pan.setValueAtTime((Math.random() * 2 - 1) * 0.42, now);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(pan);
+      pan.connect(ac.destination);
+    } else {
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ac.destination);
+    }
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(level, now + Math.min(0.18, length * 0.34));
+    gain.gain.exponentialRampToValueAtTime(level * 0.5, now + length * 0.62);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + length);
+
+    osc.frequency.setValueAtTime(baseHz, now);
+    osc.frequency.exponentialRampToValueAtTime(peakHz, now + length * 0.34);
+    osc.frequency.exponentialRampToValueAtTime(tailHz, now + length);
+    filter.frequency.exponentialRampToValueAtTime(peakHz * 1.08, now + length * 0.5);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(160, tailHz * 1.35), now + length);
+
+    osc.start(now);
+    osc.stop(now + length + 0.04);
   }
 
   function playFailWah() {
@@ -425,6 +590,7 @@
         setMode: async (mode) => {
           if (mode === "menu") {
             stopMusic();
+            stopFailWind();
             state.mode = "menu";
             this.refreshHud();
             return getStatePayload();
@@ -507,6 +673,27 @@
         }),
         getFailEaglePassCount: () => state.failEaglePassCount,
         getFailEaglePeckEvents: () => state.failEaglePeckEvents,
+        getAudioDiagnostics: () => ({
+          audioReady: state.audioReady,
+          contextState: state.audioCtx?.state || "none",
+          soundMuted: state.soundMuted,
+          musicShouldPlay: state.musicShouldPlay,
+          musicTimerActive: Boolean(state.musicTimerId),
+          failWindActive: state.failWindActive,
+          failWindUsingTrack: state.failWindUsingTrack,
+          failWindTrackReady: state.failWindTrackReady,
+          failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+          lastFailWindError: state.lastFailWindError,
+          unlockAttempts: state.audioUnlockAttempts,
+          unlockSuccesses: state.audioUnlockSuccesses,
+          unlockFailures: state.audioUnlockFailures,
+          lastUnlockAt: state.lastAudioUnlockAt,
+          lastUnlockError: state.lastAudioUnlockError,
+        }),
+        forceAudioUnlock: () => {
+          this.unlockAudioFromGesture();
+          return api.getAudioDiagnostics();
+        },
         getAutoFailureDiagnostics: () => {
           if (!state.autoDebug.lastFailure) return null;
           return JSON.parse(JSON.stringify(state.autoDebug.lastFailure));
@@ -797,6 +984,7 @@
         state.soundMuted = false;
       }
       setSoundMuted(state.soundMuted, true);
+      ensureFailWindTrack();
       this.refreshSoundToggle();
       if (this.soundToggleEl) {
         this.skipNextSoundClick = false;
@@ -812,7 +1000,14 @@
           ev.stopPropagation();
           this.unlockAudioFromGesture();
           setSoundMuted(!state.soundMuted);
-          if (!state.soundMuted && state.mode === "running") startMusic();
+          if (state.soundMuted) {
+            stopMusic();
+            stopFailWind();
+          } else {
+            this.unlockAudioFromGesture();
+            if (state.mode === "running") startMusic();
+            else if (state.mode === "failed") startFailWind();
+          }
           this.refreshSoundToggle();
         };
         this.soundToggleEl.addEventListener("pointerdown", this.soundToggleHandler, { passive: false });
@@ -864,6 +1059,7 @@
         if (!this.soundToggleEl || !this.soundToggleHandler) return;
         this.soundToggleEl.removeEventListener("pointerdown", this.soundToggleHandler);
         this.soundToggleEl.removeEventListener("click", this.soundToggleHandler);
+        stopFailWind();
       });
     }
 
@@ -893,26 +1089,48 @@
     unlockAudioFromGesture() {
       activateAudio();
       if (!state.audioCtx) return;
+      state.audioUnlockAttempts += 1;
+      state.lastAudioUnlockAt = Date.now();
       const onRunning = () => {
         primeAudioContext();
+        state.audioUnlockSuccesses += 1;
+        state.lastAudioUnlockError = "";
         if (!state.soundMuted) playPianoNote(79, 0.04, 0.02);
         if (state.mode === "running" && state.musicShouldPlay) startMusic();
+        if (state.mode === "failed" && state.failWindActive) startFailWind();
       };
       if (state.audioCtx.state === "running") {
         onRunning();
         return;
       }
       if (state.audioCtx.state === "suspended") {
-        try {
-          const resumed = state.audioCtx.resume();
-          if (resumed?.then) {
-            resumed
-              .then(() => {
-                if (state.audioCtx?.state === "running") onRunning();
-              })
-              .catch(() => {});
+        const tryResume = (attempt = 0) => {
+          if (!state.audioCtx || state.audioCtx.state === "running") return;
+          try {
+            const resumed = state.audioCtx.resume();
+            if (resumed?.then) {
+              resumed
+                .then(() => {
+                  if (state.audioCtx?.state === "running") onRunning();
+                  else if (attempt < 4) setTimeout(() => tryResume(attempt + 1), 90 + attempt * 70);
+                })
+                .catch((error) => {
+                  state.audioUnlockFailures += 1;
+                  state.lastAudioUnlockError = String(error?.message || error || "resume failed");
+                  if (attempt < 4) setTimeout(() => tryResume(attempt + 1), 110 + attempt * 80);
+                });
+            }
+          } catch (error) {
+            state.audioUnlockFailures += 1;
+            state.lastAudioUnlockError = String(error?.message || error || "resume exception");
+            if (attempt < 4) setTimeout(() => tryResume(attempt + 1), 110 + attempt * 80);
           }
-        } catch (_error) {
+        };
+        try {
+          tryResume(0);
+        } catch (error) {
+          state.audioUnlockFailures += 1;
+          state.lastAudioUnlockError = String(error?.message || error || "resume setup failed");
           // iOS can reject resume until the next trusted gesture.
         }
       }
@@ -1208,6 +1426,23 @@
             lastJumpDecision: state.autoDebug.lastJumpDecision,
             lastFailure: state.autoDebug.lastFailure,
           },
+          audio: {
+            ready: state.audioReady,
+            contextState: state.audioCtx?.state || "none",
+            musicShouldPlay: state.musicShouldPlay,
+            musicTimerActive: Boolean(state.musicTimerId),
+            failWindActive: state.failWindActive,
+            failWindUsingTrack: state.failWindUsingTrack,
+            failWindTrackReady: state.failWindTrackReady,
+            failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+            lastFailWindError: state.lastFailWindError,
+            soundMuted: state.soundMuted,
+            unlockAttempts: state.audioUnlockAttempts,
+            unlockSuccesses: state.audioUnlockSuccesses,
+            unlockFailures: state.audioUnlockFailures,
+            lastUnlockAt: state.lastAudioUnlockAt,
+            lastUnlockError: state.lastAudioUnlockError,
+          },
           lastError: state.lastError,
           build: BUILD_ID,
         });
@@ -1226,10 +1461,19 @@
       this.enterMobileImmersive();
       this.resetGame();
       startMusic();
+      if (IS_TOUCH_FULLSCREEN) {
+        setTimeout(() => {
+          if (state.mode !== "running" || state.soundMuted) return;
+          if (state.musicShouldPlay && state.audioCtx && state.audioCtx.state !== "running") {
+            setStatus("Audio is blocked by iPhone until another tap. Tap the speaker icon once to enable sound.");
+          }
+        }, 700);
+      }
       this.refreshViewportSizing(true);
     }
 
     resetGame() {
+      stopFailWind();
       state.mode = "running";
       state.time = 0;
       state.sceneTime = 0;
@@ -1972,6 +2216,7 @@
       setStatus(`Splat: ${reason}. Tap anywhere to run again. Keyboard: R or Enter.`);
       stopMusic();
       playFailWah();
+      startFailWind();
       this.refreshHud();
     }
 

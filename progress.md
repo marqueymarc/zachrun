@@ -264,3 +264,46 @@ TODO
     - `curl -I http://127.0.0.1:5173` (200 OK)
     - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
     - artifacts: `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-21T00-32-11-251Z`
+- 2026-02-21 22:35: fail wind audio + iPhone audio-unlock hardening
+  - Added fail-state irregular forelorn wind whistle layer in WebAudio:
+    - `startFailWind`, `stopFailWind`, `playFailWindWhistle`, randomized whistle timing/envelope/pitch/pan.
+    - Wind starts on death (`fail()`) and stops on restart/menu/shutdown.
+  - Increased whistle audibility and trigger behavior:
+    - immediate whistle on fail-start plus ongoing irregular whistles.
+  - Hardened iPhone audio unlock path:
+    - added resume retry loop in `unlockAudioFromGesture` with diagnostics capture (`audioUnlockAttempts/successes/failures/lastError`).
+    - if audio remains blocked shortly after run start on touch devices, status guidance is shown.
+    - unmuting during fail now re-arms wind sound immediately.
+  - Added audio diagnostics exposure:
+    - `render_game_to_text` now includes audio state (context state, muted, timers, unlock counters/errors).
+    - test API now exposes `getAudioDiagnostics()` and `forceAudioUnlock()`.
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2235`
+    - `index.html` cache-bust query updated to `20260221-2235`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+    - latest artifacts: `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-21T00-52-39-234Z`
+    - fail scenario state confirms wind+audio runtime flags active:
+      - `audio.contextState = running`
+      - `audio.failWindActive = true`
+      - `build = 2026-02-21-2235`
+- 2026-02-21 22:46: dead-state MP3 desert loop integration
+  - Wired fail-state ambient to use user-provided MP3 loop:
+    - `/assets/world/tanweraman-desert-wind-1-350398.mp3`
+  - Added `ensureFailWindTrack()` and playback lifecycle:
+    - loop while `mode=failed`
+    - pause/reset on restart/menu/shutdown
+    - preserves existing synthesized whistle as fallback if track playback fails.
+  - Added diagnostics fields for wind-track status/errors in state/test API:
+    - `failWindUsingTrack`, `failWindTrackReady`, `failWindTrackPaused`, `lastFailWindError`
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2246`
+    - `index.html` cache-bust query updated to `20260221-2246`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
