@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-20-2162";
+  const BUILD_ID = "2026-02-21-2210";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -25,6 +25,8 @@
   const AUTO_JUMP_VELOCITY = -1160;
   const COMBO_JUMP_VELOCITY = -1420;
   const EAGLE_COMBO_CLEARANCE = 168;
+  const EAGLE_JUMP_CLEARANCE = 96;
+  const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -70,6 +72,9 @@
     hazardsSinceEagle: 0,
     failReason: "",
     failEaglePassCount: 0,
+    failEaglePeckCursor: 0,
+    failEaglePeckEvents: 0,
+    failEagleUseGlideNext: true,
     clouds: [
       { x: 120, y: 34, speedMul: 1.0, scale: 0.42 },
       { x: 740, y: 58, speedMul: 0.92, scale: 0.38 },
@@ -130,6 +135,7 @@
       lastLogAt: -999,
       events: [],
       lastJumpDecision: null,
+      lastFailure: null,
     },
   };
 
@@ -462,11 +468,17 @@
           const deltaX = targetX - h.x;
           h.x = targetX;
           if (Number.isFinite(options.yFloor) && Number.isFinite(h.yFloor)) h.yFloor = options.yFloor;
+          if (Number.isFinite(options.yBase) && Number.isFinite(h.yBase)) h.yBase = options.yBase;
           if (Number.isFinite(options.speedMul)) h.speedMul = options.speedMul;
+          if (typeof options.autoAction === "string" && (options.autoAction === "duck" || options.autoAction === "jump")) {
+            h.autoAction = options.autoAction;
+          }
+          if (typeof options.flightBand === "string" && options.flightBand.trim()) h.flightBand = options.flightBand.trim().toLowerCase();
+          if (typeof options.failSwoopEnabled === "boolean") h.failSwoopEnabled = options.failSwoopEnabled;
           h.enteredAt = Number.isFinite(options.enteredAt) ? options.enteredAt : Math.max(0, state.time - 1.2);
           this.positionHazardVisual(h, deltaX);
           state.hazards.push(h);
-          return { id: h.id, type: h.type, x: h.x, yFloor: h.yFloor };
+          return { id: h.id, type: h.type, x: h.x, yFloor: h.yFloor, yBase: h.yBase };
         },
         forceFail: (reason = "hit a tumbleweed", hitType = "tumbleweed") => {
           const targetType = normalizeHazardType(hitType) || "tumbleweed";
@@ -493,6 +505,26 @@
           offset: state.player.deathJoltOffset,
           velocity: state.player.deathJoltVelocity,
         }),
+        getFailEaglePassCount: () => state.failEaglePassCount,
+        getFailEaglePeckEvents: () => state.failEaglePeckEvents,
+        getAutoFailureDiagnostics: () => {
+          if (!state.autoDebug.lastFailure) return null;
+          return JSON.parse(JSON.stringify(state.autoDebug.lastFailure));
+        },
+        getEagleHazards: () =>
+          state.hazards
+            .filter((h) => h.type === "eagle")
+            .map((h) => ({
+              id: h.id,
+              x: h.x,
+              yBase: h.yBase,
+              autoAction: h.autoAction || "",
+              flightBand: h.flightBand || "",
+              failSwoopPhase: h.failSwoopPhase || "",
+              failSwoopStyle: h.failSwoopStyle || "",
+              failSwoopEnabled: Boolean(h.failSwoopEnabled),
+              failSwoopDone: Boolean(h.failSwoopDone),
+            })),
       };
 
       window.__zackTest = api;
@@ -1157,6 +1189,13 @@
             x: Math.round(h.x),
             w: Math.round(h.visibleW ?? 0),
             rotation: Number((h.rotation ?? 0).toFixed(2)),
+            ...(h.type === "eagle"
+              ? {
+                  flightBand: h.flightBand || "mid",
+                  autoAction: h.autoAction || "duck",
+                  yBase: Math.round(h.yBase || 0),
+                }
+              : {}),
           })),
           failReason: state.failReason,
           camera: {
@@ -1167,6 +1206,7 @@
           autoDebug: {
             events: state.autoDebug.events.slice(-8),
             lastJumpDecision: state.autoDebug.lastJumpDecision,
+            lastFailure: state.autoDebug.lastFailure,
           },
           lastError: state.lastError,
           build: BUILD_ID,
@@ -1204,12 +1244,16 @@
       state.hazardsSinceEagle = 0;
       state.failReason = "";
       state.failEaglePassCount = 0;
+      state.failEaglePeckCursor = Math.floor(Math.random() * FAIL_EAGLE_PECK_PATTERN.length);
+      state.failEaglePeckEvents = 0;
+      state.failEagleUseGlideNext = true;
       state.failAnimTime = 0;
       state.hitHazardId = null;
       state.lastError = "";
       state.autoDebug.lastLogAt = -999;
       state.autoDebug.events = [];
       state.autoDebug.lastJumpDecision = null;
+      state.autoDebug.lastFailure = null;
       this.autoTapSequencePhase = 0;
       this.autoTapSequenceUntil = 0;
 
@@ -1428,7 +1472,7 @@
       const playerRight = p.x + p.width * 0.25;
       for (const h of state.hazards) {
         if (h.type !== "eagle") continue;
-        if (!h.autoAction) h.autoAction = Math.random() < 0.32 ? "jump" : "duck";
+        if (!h.autoAction) h.autoAction = h.flightBand === "low" ? "jump" : "duck";
         if (h.autoAction !== "duck") continue;
         const speed = Math.max(120, state.speed * (h.speedMul || 1));
         const tFront = (h.x - playerRight) / speed;
@@ -1458,19 +1502,20 @@
       const playerRight = p.x + p.width * 0.25;
       for (const h of state.hazards) {
         if (h.type !== "eagle") continue;
-        if (!h.autoAction) h.autoAction = Math.random() < 0.32 ? "jump" : "duck";
+        if (!h.autoAction) h.autoAction = h.flightBand === "low" ? "jump" : "duck";
         if (h.autoAction !== "jump") continue;
         const speed = Math.max(120, state.speed * (h.speedMul || 1));
         const tFront = (h.x - playerRight) / speed;
         const tBack = (h.x + (h.visibleW || 120) - playerLeft) / speed;
         if (tBack < -0.06 || tFront > 0.62) continue;
+        const useCombo = h.flightBand === "high";
         const decision = {
           hazardId: h.id,
           type: "eagle",
           tFront: Number(tFront.toFixed(3)),
           tBack: Number(tBack.toFixed(3)),
-          armCombo: tFront <= 0.34 && tBack >= -0.02,
-          triggerJump: tFront <= 0.2 && tBack >= -0.05,
+          armCombo: useCombo && tFront <= 0.34 && tBack >= -0.02,
+          triggerJump: tFront <= (useCombo ? 0.2 : 0.24) && tBack >= -0.05,
         };
         pushAutoLog("eagle-jump-check", decision);
         return decision;
@@ -1570,7 +1615,25 @@
       const visibleW = tex.width * scale;
       const visibleH = tex.height * scale;
       const x = WORLD_W + 140;
-      const yBase = FLOOR_Y - (220 + Math.random() * 34);
+      const bandRoll = Math.random();
+      let flightBand = "mid";
+      let yBase = FLOOR_Y - (220 + Math.random() * 34);
+      let autoAction = "duck";
+      let flapBobAmp = 10;
+      let cruiseBobAmp = 24;
+      if (bandRoll < 0.3) {
+        flightBand = "low";
+        yBase = FLOOR_Y - (166 + Math.random() * 26);
+        autoAction = "jump";
+        flapBobAmp = 8;
+        cruiseBobAmp = 17;
+      } else if (bandRoll > 0.82) {
+        flightBand = "high";
+        yBase = FLOOR_Y - (270 + Math.random() * 44);
+        autoAction = Math.random() < 0.14 ? "jump" : "duck";
+        flapBobAmp = 11;
+        cruiseBobAmp = 27;
+      }
       const shadow = this.add
         .image(x + visibleW * 0.5, FLOOR_Y + 16, "eagle1Shadow")
         .setScale(scale * 0.64)
@@ -1600,8 +1663,12 @@
         flap: Math.random() * Math.PI * 2,
         bobPhase: Math.random() * Math.PI * 2,
         hitDrop: 0,
-        autoAction: "",
+        autoAction,
+        flightBand,
+        flapBobAmp,
+        cruiseBobAmp,
         failSwoopPhase: "",
+        failSwoopStyle: "",
         failSwoopDone: false,
         failSwoopEnabled: Math.random() < 0.52,
         failPeckTimer: 0,
@@ -1698,7 +1765,7 @@
       } else if (h.type === "eagle") {
         const flap = Math.sin(h.flap || 0);
         const travel = (h.enteredAt === null ? 0 : state.time - h.enteredAt) * (h.speedMul || 1);
-        const bob = flap * 10 + Math.sin((h.bobPhase || 0) + travel * 5.4) * 24 + (h.hitDrop || 0);
+        const bob = flap * (h.flapBobAmp || 10) + Math.sin((h.bobPhase || 0) + travel * 5.4) * (h.cruiseBobAmp || 24) + (h.hitDrop || 0);
         const px = h.x + h.visibleW * 0.5;
         const py = h.yBase + bob;
         const frameUp = flap >= 0;
@@ -1751,13 +1818,90 @@
       return dx * dx + dy * dy <= r * r;
     }
 
-    fail(reason, hitHazard = null) {
+    buildAutoFailureDiagnostics(reason, hitHazard, failContext = null) {
+      const p = state.player;
+      const playerLeft = p.x - p.width * 0.23;
+      const playerRight = p.x + p.width * 0.23;
+      const nearbyHazards = state.hazards
+        .filter((h) => h.x + (h.visibleW || 0) > p.x - 280 && h.x < p.x + 820)
+        .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))
+        .slice(0, 6)
+        .map((h) => {
+          const speed = Math.max(120, state.speed * (h.speedMul || 1));
+          const tFront = (h.x - playerRight) / speed;
+          const tBack = (h.x + (h.visibleW || 120) - playerLeft) / speed;
+          return {
+            id: h.id,
+            type: h.type,
+            x: Math.round(h.x),
+            yBase: Number.isFinite(h.yBase) ? Math.round(h.yBase) : null,
+            yFloor: Number.isFinite(h.yFloor) ? Math.round(h.yFloor) : null,
+            w: Math.round(h.visibleW || 0),
+            h: Math.round(h.visibleH || 0),
+            autoAction: h.autoAction || "",
+            flightBand: h.flightBand || "",
+            requiresHighJump: Boolean(h.requiresHighJump),
+            tFront: Number(tFront.toFixed(3)),
+            tBack: Number(tBack.toFixed(3)),
+          };
+        });
+
+      return {
+        reason,
+        failReason: state.failReason,
+        time: Number(state.time.toFixed(3)),
+        score: state.score,
+        speed: Math.round(state.speed),
+        player: {
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+          vy: Math.round(p.vy),
+          onGround: Boolean(p.onGround),
+          duck: Boolean(p.duck),
+          comboJumpActive: Boolean(p.comboJumpActive),
+          comboWindow: Number((p.crouchComboTimer || 0).toFixed(3)),
+        },
+        input: {
+          jumpPressed: Boolean(input.jumpPressed),
+          jumpHeld: Boolean(input.jumpHeld),
+          diveHeld: Boolean(input.diveHeld),
+          touchLeftCount: input.touchLeftCount,
+          touchRightCount: input.touchRightCount,
+        },
+        hitHazard: hitHazard
+          ? {
+              id: hitHazard.id,
+              type: hitHazard.type,
+              x: Math.round(hitHazard.x),
+              yBase: Number.isFinite(hitHazard.yBase) ? Math.round(hitHazard.yBase) : null,
+              yFloor: Number.isFinite(hitHazard.yFloor) ? Math.round(hitHazard.yFloor) : null,
+              w: Math.round(hitHazard.visibleW || 0),
+              h: Math.round(hitHazard.visibleH || 0),
+              autoAction: hitHazard.autoAction || "",
+              flightBand: hitHazard.flightBand || "",
+            }
+          : null,
+        failContext: failContext || null,
+        lastJumpDecision: state.autoDebug.lastJumpDecision,
+        nearbyHazards,
+      };
+    }
+
+    fail(reason, hitHazard = null, failContext = null) {
       if (state.mode !== "running") return;
       state.mode = "failed";
       state.failReason = reason;
       state.failEaglePassCount = 0;
+      state.failEaglePeckCursor = Math.floor(Math.random() * FAIL_EAGLE_PECK_PATTERN.length);
+      state.failEaglePeckEvents = 0;
+      state.failEagleUseGlideNext = true;
       state.failAnimTime = 0.95;
       state.hitHazardId = hitHazard?.id ?? null;
+      if (state.autoPlay) {
+        state.autoDebug.lastFailure = this.buildAutoFailureDiagnostics(reason, hitHazard, failContext);
+      } else {
+        state.autoDebug.lastFailure = null;
+      }
       if (!state.autoPlay) state.best = Math.max(state.best, state.score);
       state.player.expression = "horror";
       pushAutoLog("fail", {
@@ -1767,7 +1911,11 @@
         playerX: Math.round(state.player.x),
         playerY: Math.round(state.player.y),
         decision: state.autoDebug.lastJumpDecision,
+        failContext: failContext || null,
       }, true);
+      if (state.autoPlay && state.autoDebug.lastFailure) {
+        pushAutoLog("auto-fail", state.autoDebug.lastFailure, true);
+      }
 
       for (const h of state.hazards) {
         if (h.type === "snake") h.isFailKiller = false;
@@ -2124,21 +2272,29 @@
         h.flap += dt * 9;
         return;
       }
-      if (!h.failSwoopPhase && h.x <= state.player.x + 220) {
-        h.failSwoopPhase = "dive";
-        h.failDiveTimer = 0.42;
+      if (!h.failSwoopPhase && h.x <= state.player.x + 300) {
+        h.failSwoopPhase = h.failSwoopStyle === "glide" ? "glide" : "dive";
+        h.failDiveTimer = h.failSwoopPhase === "glide" ? 0.58 : 0.42;
+      }
+      if (!h.failSwoopPhase) {
+        h.x -= Math.max(108, state.speed * 0.86 * (h.speedMul || 1)) * dt;
+        h.yBase += (h.failCruiseYBase - h.yBase) * Math.min(1, dt * 2.2);
+        h.flap += dt * 9;
+        return;
       }
 
-      if (h.failSwoopPhase === "dive") {
-        h.x -= Math.max(96, state.speed * 0.62 * (h.speedMul || 1)) * dt;
-        h.yBase += (FLOOR_Y - 28 - h.yBase) * Math.min(1, dt * 5.8);
-        h.flap += dt * 10.4;
+      if (h.failSwoopPhase === "dive" || h.failSwoopPhase === "glide") {
+        const isGlide = h.failSwoopPhase === "glide";
+        h.x -= Math.max(96, state.speed * (isGlide ? 0.7 : 0.62) * (h.speedMul || 1)) * dt;
+        h.yBase += (FLOOR_Y - (isGlide ? 66 : 28) - h.yBase) * Math.min(1, dt * (isGlide ? 3.4 : 5.8));
+        h.flap += dt * (isGlide ? 9.6 : 10.4);
         h.failDiveTimer = Math.max(0, (h.failDiveTimer || 0) - dt);
-        const closeEnoughToPeck = Math.abs(eagleCenterX - brushCenterX) <= 92;
+        const closeEnoughToPeck = Math.abs(eagleCenterX - brushCenterX) <= (isGlide ? 108 : 92);
         if (!h.failSwoopDone && (closeEnoughToPeck || h.failDiveTimer <= 0)) {
           h.failSwoopDone = true;
+          state.failEaglePeckEvents += 1;
           h.failSwoopPhase = "peck";
-          h.failPeckTimer = 0.32;
+          h.failPeckTimer = isGlide ? 0.38 : 0.32;
           this.triggerPlayerDeathJolt(0.92);
         }
         if (h.x <= state.player.x - 10 && !h.failSwoopDone) h.failSwoopPhase = "climb";
@@ -2182,16 +2338,25 @@
     spawnFailEagle() {
       const hazard = this.createEagleHazard();
       const mustPeckFirstPass = state.failEaglePassCount === 0;
+      const patternIndex = state.failEaglePeckCursor % FAIL_EAGLE_PECK_PATTERN.length;
+      const shouldPeckPass = mustPeckFirstPass || FAIL_EAGLE_PECK_PATTERN[patternIndex];
       const destX = mustPeckFirstPass ? state.player.x + 250 : WORLD_W + 160 + Math.random() * 220;
       const deltaX = destX - hazard.x;
       hazard.x = destX;
       hazard.speedMul = mustPeckFirstPass ? 0.78 : 0.92 + Math.random() * 0.22;
-      hazard.failSwoopPhase = mustPeckFirstPass ? "dive" : "";
+      if (shouldPeckPass && !mustPeckFirstPass) {
+        hazard.failSwoopStyle = state.failEagleUseGlideNext ? "glide" : "dive";
+        state.failEagleUseGlideNext = !state.failEagleUseGlideNext;
+      } else {
+        hazard.failSwoopStyle = "dive";
+      }
+      hazard.failSwoopPhase = mustPeckFirstPass ? hazard.failSwoopStyle : "";
       hazard.failSwoopDone = false;
-      hazard.failSwoopEnabled = mustPeckFirstPass || Math.random() < 0.3;
+      hazard.failSwoopEnabled = shouldPeckPass;
       hazard.failPeckTimer = 0;
       hazard.failDiveTimer = mustPeckFirstPass ? 0.55 : 0;
       hazard.failLaunchBoost = 0;
+      state.failEaglePeckCursor = (state.failEaglePeckCursor + 1) % FAIL_EAGLE_PECK_PATTERN.length;
       state.failEaglePassCount += 1;
       this.positionHazardVisual(hazard, deltaX);
       state.hazards.push(hazard);
@@ -2306,6 +2471,8 @@
           if (eagleJump?.armCombo) {
             input.diveHeld = true;
             if (eagleJump.triggerJump) input.jumpPressed = true;
+          } else if (eagleJump?.triggerJump) {
+            input.jumpPressed = true;
           } else {
             input.diveHeld = input.diveHeld || this.shouldAutoDuck();
           }
@@ -2434,16 +2601,40 @@
 
           if (h.type === "eagle") {
             const eagleClearByCombo = p.comboJumpActive && p.y < FLOOR_Y - EAGLE_COMBO_CLEARANCE;
-            const eagleUnsafe = overlapX && !(p.duck && p.onGround) && !eagleClearByCombo;
+            const eagleNeedsJump = h.autoAction === "jump" || h.flightBand === "low";
+            const eagleClearByDuck = !eagleNeedsJump && p.duck && p.onGround;
+            const eagleClearByJump = eagleNeedsJump && p.y < FLOOR_Y - EAGLE_JUMP_CLEARANCE;
+            const eagleUnsafe = overlapX && !eagleClearByDuck && !eagleClearByJump && !eagleClearByCombo;
             if (eagleUnsafe) {
-              this.fail("hit by an eagle", h);
+              this.fail("hit by an eagle", h, {
+                overlapX,
+                eagleNeedsJump,
+                eagleClearByDuck,
+                eagleClearByJump,
+                eagleClearByCombo,
+                playerY: Number(p.y.toFixed(2)),
+                playerOnGround: Boolean(p.onGround),
+                playerDuck: Boolean(p.duck),
+                comboJumpActive: Boolean(p.comboJumpActive),
+                eagleBand: h.flightBand || "mid",
+                eagleAction: h.autoAction || "duck",
+                eagleYBase: Number((h.yBase || 0).toFixed(2)),
+              });
               return;
             }
             continue;
           }
 
           if (overlapX && !jumpedClear) {
-            this.fail(h.type === "snake" ? "killed by a snake bite" : "hit a tumbleweed", h);
+            this.fail(h.type === "snake" ? "killed by a snake bite" : "hit a tumbleweed", h, {
+              overlapX,
+              jumpedClear,
+              neededClearance,
+              playerY: Number(p.y.toFixed(2)),
+              playerOnGround: Boolean(p.onGround),
+              playerDuck: Boolean(p.duck),
+              comboJumpActive: Boolean(p.comboJumpActive),
+            });
             return;
           }
 

@@ -232,3 +232,35 @@ TODO
     - `python3 -m json.tool /Users/marc/src/zachgame1/site.webmanifest`
     - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
     - jump apex sample via test API: normal `y=471`, combo `y=264`
+- 2026-02-21 22:10: eagle fail-peck reliability + altitude variance + autoplay diagnostics
+  - Root cause found for "only first eagle pecks": in `updateEagleFailPass`, peck-enabled eagles with empty phase were falling through to `climb` before reaching the dive/glide trigger window; fixed by adding a pre-swoop cruise branch.
+  - Added deterministic subsequent peck cadence for fail-state eagles (~30%) with guaranteed first peck on all fail reasons (including non-eagle deaths).
+  - Added alternating peck approach styles for subsequent pecks so glide-down pecks are guaranteed to appear in-session (`dive` + `glide`).
+  - Added running eagle altitude bands + action lanes:
+    - low band: jump-over eagles
+    - mid/high bands: predominantly duck eagles
+    - per-band bob amplitude to make flight heights visibly distinct.
+  - Added eagle collision/action updates:
+    - low/jump eagles can be cleared by a normal jump threshold (`EAGLE_JUMP_CLEARANCE`).
+    - autoplay now triggers non-combo eagle jumps directly (not only combo-armed jumps).
+  - Added autoplay failure diagnostics capture when auto dies:
+    - new `autoDebug.lastFailure` payload (player state, input, hit hazard, nearby hazards, fail context, last auto decision)
+    - logged as `auto-fail` event and exposed in test API.
+  - Expanded test API for diagnostics and eagle introspection:
+    - `getFailEaglePassCount`, `getFailEaglePeckEvents`, `getAutoFailureDiagnostics`, `getEagleHazards`
+    - `spawnHazard` now accepts eagle overrides (`yBase`, `autoAction`, `flightBand`, `failSwoopEnabled`).
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2210`
+    - `index.html` cache-bust params updated to `20260221-2210`.
+  - Playwright suite updates:
+    - replaced old eagle fail peck test with:
+      - `eagle-flight-variety`
+      - `fail-eagle-peck-cadence` (non-eagle death; verifies repeated pecks and glide presence)
+      - `autoplay-diagnostics` (captures diagnostics when autoplay fails)
+  - Validation:
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - local persistent server `python3 -m http.server 5173 --bind 127.0.0.1`
+    - `curl -I http://127.0.0.1:5173` (200 OK)
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - artifacts: `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-21T00-32-11-251Z`

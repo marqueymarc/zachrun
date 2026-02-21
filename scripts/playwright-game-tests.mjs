@@ -267,54 +267,120 @@ async function scenarioSnakeFailSequence({ page, scenarioDir }) {
   assert.ok(minJolt < -1.5, `expected visible body jolt on bite, got min offset ${minJolt}`);
 }
 
-async function scenarioEagleFailPeck({ page, scenarioDir }) {
-  const result = await page.evaluate(async () => {
-    const originalRandom = Math.random;
-    try {
-      await window.__zackTest.resetRun({ autoPlay: false });
-      window.__zackTest.clearHazards();
-      window.__zackTest.forceFail("hit by an eagle", "eagle");
-      window.__zackTest.clearHazards();
-      Math.random = () => 0.1;
-
-      let found = null;
-      for (let i = 0; i < 320; i += 1) {
-        await window.__zackTest.step(40);
-        const scene = window.__zackGame?.scene?.scenes?.[0];
-        const player = scene?.playerSprite;
-        const jolt = window.__zackTest.getPlayerDeathJolt();
-        const eagles = scene?.children?.list?.filter(
-          (o) => o?.texture && (o.texture.key === "eagle1" || o.texture.key === "eagle2")
-        ) || [];
-
-        let nearest = null;
-        for (const e of eagles) {
-          const dx = (e.x || 0) - (player?.x || 0);
-          const dy = (e.y || 0) - (player?.y || 0);
-          const d = Math.hypot(dx, dy);
-          if (!nearest || d < nearest.d) nearest = { d, dx, dy, tex: e.texture.key };
-        }
-
-        if (nearest && nearest.d < 130 && Math.abs(nearest.dy) < 130 && Math.abs(jolt.velocity || 0) > 100) {
-          found = {
-            frame: i,
-            nearest,
-            joltOffset: jolt.offset || 0,
-            joltVel: jolt.velocity || 0,
-            eagleCount: eagles.length,
-          };
-          break;
-        }
+async function scenarioEagleFlightVariety({ page, scenarioDir }) {
+  const metrics = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    const samples = [];
+    for (let i = 0; i < 20; i += 1) {
+      const spawn = window.__zackTest.spawnHazard("eagle", { x: 900 + i * 22, speedMul: 0.95 });
+      const eagle = window.__zackTest.getEagleHazards().find((e) => e.id === spawn.id);
+      if (eagle) {
+        samples.push({
+          id: eagle.id,
+          yBase: eagle.yBase,
+          autoAction: eagle.autoAction,
+          flightBand: eagle.flightBand,
+        });
       }
-      return found;
-    } finally {
-      Math.random = originalRandom;
     }
+    const ys = samples.map((s) => s.yBase);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const actions = Object.fromEntries(["jump", "duck"].map((k) => [k, samples.filter((s) => s.autoAction === k).length]));
+    const bands = [...new Set(samples.map((s) => s.flightBand).filter(Boolean))];
+    return {
+      sampleCount: samples.length,
+      minY,
+      maxY,
+      spread: maxY - minY,
+      actions,
+      bands,
+      samples,
+    };
   });
 
-  assert.ok(result, "expected eagle peck + shudder event after death");
-  await page.screenshot({ path: path.join(scenarioDir, "eagle-peck.png"), fullPage: true });
-  await fs.writeFile(path.join(scenarioDir, "eagle-peck.json"), JSON.stringify(result, null, 2));
+  assert.ok(metrics.sampleCount >= 18, `expected >=18 eagle samples, got ${metrics.sampleCount}`);
+  assert.ok(metrics.spread >= 70, `expected varied eagle heights, got spread ${metrics.spread}`);
+  assert.ok(metrics.actions.jump > 0 && metrics.actions.duck > 0, `expected both jump and duck eagle actions, got ${JSON.stringify(metrics.actions)}`);
+  assert.ok(metrics.bands.length >= 2, `expected multiple flight bands, got ${JSON.stringify(metrics.bands)}`);
+  await fs.writeFile(path.join(scenarioDir, "eagle-flight-variety.json"), JSON.stringify(metrics, null, 2));
+}
+
+async function scenarioFailEaglePeckCadence({ page, scenarioDir }) {
+  const stats = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.forceFail("hit a tumbleweed", "tumbleweed");
+    window.__zackTest.clearHazards();
+
+    let maxPasses = 0;
+    let maxPecks = 0;
+    const peckStylesSeen = { dive: 0, glide: 0 };
+    for (let i = 0; i < 520; i += 1) {
+      await window.__zackTest.step(70);
+      maxPasses = Math.max(maxPasses, window.__zackTest.getFailEaglePassCount());
+      maxPecks = Math.max(maxPecks, window.__zackTest.getFailEaglePeckEvents());
+      const eagles = window.__zackTest.getEagleHazards();
+      for (const e of eagles) {
+        if (e.failSwoopPhase === "dive") peckStylesSeen.dive += 1;
+        if (e.failSwoopPhase === "glide") peckStylesSeen.glide += 1;
+      }
+      if (maxPasses >= 8 && maxPecks >= 3) break;
+    }
+    const subsequentRate = maxPasses > 1 ? (maxPecks - 1) / (maxPasses - 1) : 0;
+    return {
+      failReason: window.__zackTest.getState().failReason,
+      maxPasses,
+      maxPecks,
+      subsequentRate,
+      peckStylesSeen,
+      eagleSnapshot: window.__zackTest.getEagleHazards(),
+    };
+  });
+
+  assert.equal(stats.failReason, "hit a tumbleweed", "expected non-eagle fail reason for peck cadence test");
+  assert.ok(stats.maxPasses >= 5, `expected at least 5 fail-state eagle passes, got ${stats.maxPasses}`);
+  assert.ok(stats.maxPecks >= 2, `expected repeated pecks after first pass, got ${stats.maxPecks}`);
+  assert.ok(
+    stats.subsequentRate >= 0.15 && stats.subsequentRate <= 0.6,
+    `expected about 30% subsequent pecks, got ${(stats.subsequentRate * 100).toFixed(1)}%`
+  );
+  assert.ok(stats.peckStylesSeen.glide > 0, `expected at least one glide peck approach, got ${JSON.stringify(stats.peckStylesSeen)}`);
+
+  await page.screenshot({ path: path.join(scenarioDir, "eagle-peck-cadence.png"), fullPage: true });
+  await fs.writeFile(path.join(scenarioDir, "eagle-peck-cadence.json"), JSON.stringify(stats, null, 2));
+}
+
+async function scenarioAutoplayDiagnostics({ page, scenarioDir }) {
+  const result = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: true });
+    let failedAtStep = -1;
+    for (let i = 0; i < 780; i += 1) {
+      await window.__zackTest.step(60);
+      const state = window.__zackTest.getState();
+      if (state.mode === "failed") {
+        failedAtStep = i;
+        break;
+      }
+    }
+    const state = window.__zackTest.getState();
+    const diagnostics = window.__zackTest.getAutoFailureDiagnostics();
+    return {
+      mode: state.mode,
+      failedAtStep,
+      score: state.score,
+      speed: state.speed,
+      failReason: state.failReason || "",
+      diagnostics,
+      recentAutoEvents: state.autoDebug?.events || [],
+    };
+  });
+
+  if (result.mode === "failed") {
+    assert.ok(result.diagnostics, "expected autoplay failure diagnostics when autoplay dies");
+  }
+  await fs.writeFile(path.join(scenarioDir, "autoplay-diagnostics.json"), JSON.stringify(result, null, 2));
 }
 
 async function main() {
@@ -343,7 +409,9 @@ async function main() {
       ["hazard-queue", scenarioHazardQueue],
       ["combo-jump-big-tumbleweed", scenarioComboJumpAndBigTumbleweed],
       ["snake-fail-sequence", scenarioSnakeFailSequence],
-      ["eagle-fail-peck", scenarioEagleFailPeck],
+      ["eagle-flight-variety", scenarioEagleFlightVariety],
+      ["fail-eagle-peck-cadence", scenarioFailEaglePeckCadence],
+      ["autoplay-diagnostics", scenarioAutoplayDiagnostics],
     ];
 
     for (const [name, fn] of scenarios) {
