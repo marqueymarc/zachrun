@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-21-2254";
+  const BUILD_ID = "2026-02-21-2301";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -27,7 +27,7 @@
   const EAGLE_COMBO_CLEARANCE = 168;
   const EAGLE_JUMP_CLEARANCE = 96;
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
-  const FAIL_WIND_TRACK_URL = "./assets/world/tanweraman-desert-wind-1-350398.mp3";
+  const FAIL_WIND_TRACK_URL = "/audio/fail-wind.mp3";
   const FAIL_WIND_TRACK_VOLUME = 0.46;
   const MUSIC_MASTER_GAIN = 0.34;
   const HAZARD_SHADOW_DEPTH = 168;
