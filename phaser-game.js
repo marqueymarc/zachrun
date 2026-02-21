@@ -13,6 +13,7 @@
   const TARGET_SCORE = 12000;
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
+  const MIDGROUND_PARALLAX_BLEND = 0.34;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
   const BUILD_ID = "2026-02-21-2312";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
@@ -26,8 +27,12 @@
   const COMBO_JUMP_VELOCITY = -1420;
   const EAGLE_COMBO_CLEARANCE = 168;
   const EAGLE_JUMP_CLEARANCE = 96;
+  const FAIL_FIRST_PASS_DELAY_SECONDS = 5;
+  const FAIL_EAGLE_SPAWN_CHANCE = 0.08;
+  const FAIL_SNAKE_SPAWN_CHANCE = 0.7;
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
-  const FAIL_WIND_TRACK_URL = "/audio/fail-wind.mp3";
+  const FAIL_WIND_TRACK_ROUTE_URL = "/audio/fail-wind.mp3";
+  const FAIL_WIND_TRACK_ASSET_URL = "/assets/world/tanweraman-desert-wind-1-350398.mp3";
   const FAIL_WIND_TRACK_VOLUME = 0.46;
   const MUSIC_MASTER_GAIN = 0.34;
   const HAZARD_SHADOW_DEPTH = 168;
@@ -41,6 +46,8 @@
   const DEATH_POSE_SIZE_BOOST = 1.5;
   const DEATH_POSE_PERSPECTIVE_X = 1.12;
   const DEATH_POSE_PERSPECTIVE_Y = 0.78;
+  const SNAKE_SPEED_MIN = 0.56;
+  const SNAKE_SPEED_RANGE = 0.12;
   const SNAKE_FAIL_RETREAT_DISTANCE = WORLD_W * 0.25;
   const PLAYER_VISUAL_SIZE_BIAS = {
     run1: 1,
@@ -263,18 +270,32 @@
 
   function ensureFailWindTrack() {
     if (state.failWindTrack || typeof Audio === "undefined") return state.failWindTrack;
+    const isLocalStatic = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+    const primarySrc = isLocalStatic ? FAIL_WIND_TRACK_ASSET_URL : FAIL_WIND_TRACK_ROUTE_URL;
+    const fallbackSrc = isLocalStatic ? FAIL_WIND_TRACK_ROUTE_URL : FAIL_WIND_TRACK_ASSET_URL;
+    const buildTrackSrc = (src) => `${src}?v=${BUILD_ID}`;
     try {
-      const track = new Audio(`${FAIL_WIND_TRACK_URL}?v=${BUILD_ID}`);
+      const track = new Audio(buildTrackSrc(primarySrc));
       track.loop = true;
       track.preload = "auto";
       track.playsInline = true;
       track.muted = Boolean(state.soundMuted);
       track.volume = state.soundMuted ? 0 : FAIL_WIND_TRACK_VOLUME;
+      track._failWindSrcPrimary = primarySrc;
+      track._failWindSrcFallback = fallbackSrc;
+      track._failWindFallbackUsed = false;
       track.addEventListener("canplaythrough", () => {
         state.failWindTrackReady = true;
       });
       track.addEventListener("error", () => {
-        state.lastFailWindError = "Failed to load fail wind track.";
+        if (!track._failWindFallbackUsed) {
+          track._failWindFallbackUsed = true;
+          state.failWindTrackReady = false;
+          track.src = buildTrackSrc(fallbackSrc);
+          track.load();
+          return;
+        }
+        state.lastFailWindError = "Failed to load fail wind track from primary and fallback URLs.";
       });
       state.failWindTrack = track;
     } catch (error) {
@@ -733,6 +754,8 @@
           failWindUsingTrack: state.failWindUsingTrack,
           failWindTrackReady: state.failWindTrackReady,
           failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+          failWindTrackSrc: state.failWindTrack ? state.failWindTrack.currentSrc || state.failWindTrack.src || "" : "",
+          failWindFallbackUsed: state.failWindTrack ? Boolean(state.failWindTrack._failWindFallbackUsed) : false,
           failWindTrackPrimed: state.failWindTrackPrimed,
           failWindPrimeAttempts: state.failWindPrimeAttempts,
           failWindPrimeSuccesses: state.failWindPrimeSuccesses,
@@ -810,6 +833,14 @@
         .setTint(0xda9a79);
 
       this.seamBlend = this.add.rectangle(WORLD_W * 0.5, WORLD_H - this.nearH - 3, WORLD_W + 140, 84, 0xe3a485, 0.14);
+      this.upperSeamBlend = this.add.rectangle(
+        WORLD_W * 0.5,
+        WORLD_H - this.nearH - Math.round(this.midH * 0.58),
+        WORLD_W + 140,
+        76,
+        0xd39576,
+        0.12
+      );
 
       const seamKey = "seamGradientBand";
       if (!this.textures.exists(seamKey)) {
@@ -854,6 +885,41 @@
         .setOrigin(0.5, 0.5)
         .setBlendMode(Phaser.BlendModes.MULTIPLY)
         .setAlpha(0.22);
+
+      this.upperSeamNoise = this.add
+        .image(WORLD_W * 0.5, WORLD_H - this.nearH - Math.round(this.midH * 0.58), seamNoiseKey)
+        .setOrigin(0.5, 0.5)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.18);
+
+      const seamDustKey = "seamDustStrip";
+      if (!this.textures.exists(seamDustKey)) {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        const w = 512;
+        const h = 108;
+        for (let i = 0; i < 1500; i += 1) {
+          const y = Math.random() * h;
+          const centerBias = 1 - Math.abs((y / h) * 2 - 1);
+          const alpha = (0.015 + Math.random() * 0.11) * Math.max(0, centerBias);
+          const hueShift = (Math.random() - 0.5) * 16;
+          const color = Phaser.Display.Color.GetColor(218 + hueShift, 152 + hueShift * 0.35, 109 + hueShift * 0.22);
+          const radius = 1 + Math.random() * 2.9;
+          g.fillStyle(color, alpha);
+          g.fillCircle(Math.random() * w, y, radius);
+        }
+        g.generateTexture(seamDustKey, w, h);
+        g.destroy();
+      }
+      this.seamDustNear = this.add
+        .tileSprite(WORLD_W * 0.5, WORLD_H - this.nearH - 5, WORLD_W + 180, 108, seamDustKey)
+        .setOrigin(0.5, 0.5)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.24);
+      this.seamDustUpper = this.add
+        .tileSprite(WORLD_W * 0.5, WORLD_H - this.nearH - Math.round(this.midH * 0.58), WORLD_W + 180, 98, seamDustKey)
+        .setOrigin(0.5, 0.5)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.18);
 
       this.cloudSprites = state.clouds.map((c) =>
         this.add
@@ -1499,6 +1565,8 @@
             failWindUsingTrack: state.failWindUsingTrack,
             failWindTrackReady: state.failWindTrackReady,
             failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+            failWindTrackSrc: state.failWindTrack ? state.failWindTrack.currentSrc || state.failWindTrack.src || "" : "",
+            failWindFallbackUsed: state.failWindTrack ? Boolean(state.failWindTrack._failWindFallbackUsed) : false,
             failWindTrackPrimed: state.failWindTrackPrimed,
             failWindPrimeAttempts: state.failWindPrimeAttempts,
             failWindPrimeSuccesses: state.failWindPrimeSuccesses,
@@ -1750,12 +1818,14 @@
       if (!candidate) return null;
 
       const h = candidate.h;
-      const clearance = clamp((h.visibleH || 96) * 0.28 + (h.type === "snake" ? 24 : 10), 54, 126);
+      const requiresHighJump = h.type === "tumbleweed" && Boolean(h.requiresHighJump);
+      const clearance = requiresHighJump ? 212 : clamp((h.visibleH || 96) * 0.28 + (h.type === "snake" ? 24 : 10), 54, 126);
       const window = this.computeJumpClearanceWindow(clearance);
       const triggerT = clamp(window.start + 0.18 + (h.type === "snake" ? 0.03 : 0), window.start + 0.05, window.end - 0.04);
       const validWindow = candidate.tBack >= window.start && candidate.tFront <= window.end;
       const shouldJump = validWindow && candidate.tFront <= triggerT;
       const emergency = candidate.tFront <= 0.085 && candidate.tBack >= -0.03;
+      const armCombo = requiresHighJump && candidate.tFront <= triggerT + 0.14 && candidate.tBack >= -0.08;
       const decision = {
         hazardId: h.id,
         type: h.type,
@@ -1768,6 +1838,8 @@
         windowStart: Number(window.start.toFixed(3)),
         windowEnd: Number(window.end.toFixed(3)),
         triggerT: Number(triggerT.toFixed(3)),
+        requiresHighJump,
+        armCombo,
         shouldJump: shouldJump || emergency,
         emergency,
       };
@@ -1900,7 +1972,7 @@
         radius: Math.max(14, visibleH * 0.32),
         rotation: 0,
         spin: 0,
-        speedMul: 0.66 + Math.random() * 0.14,
+        speedMul: SNAKE_SPEED_MIN + Math.random() * SNAKE_SPEED_RANGE,
         enteredAt: null,
         isStriking: false,
         strikeTimer: 0,
@@ -2278,7 +2350,7 @@
 
       state.camera.targetZoom = 1;
       state.camera.targetScreenX = CAMERA_BASE_SCREEN_X;
-      state.nextHazardIn = 0.45;
+      state.nextHazardIn = FAIL_FIRST_PASS_DELAY_SECONDS;
 
       setStatus(`Splat: ${reason}. Tap anywhere to run again. Keyboard: R or Enter.`);
       stopMusic();
@@ -2438,10 +2510,25 @@
     updateBackgroundLayers() {
       const farSpeed = BACKGROUND_SCROLL_SPEED;
       const nearSpeed = BACKGROUND_SCROLL_SPEED * 2.6 + state.speed * 0.06;
-      const midSpeed = farSpeed + (nearSpeed - farSpeed) * 0.54;
+      const midSpeed = farSpeed + (nearSpeed - farSpeed) * MIDGROUND_PARALLAX_BLEND;
       this.farLayer.tilePositionX = (state.sceneTime * farSpeed) / this.farScale;
       this.midLayer.tilePositionX = (state.sceneTime * midSpeed) / this.midScale;
       this.nearLayer.tilePositionX = (state.sceneTime * nearSpeed) / this.nearScale;
+      const nearSeamY = WORLD_H - this.nearH - 5 + Math.sin(state.sceneTime * 0.54) * 1.8;
+      const upperSeamY = WORLD_H - this.nearH - Math.round(this.midH * 0.58) + Math.sin(state.sceneTime * 0.43 + 1.2) * 1.4;
+      if (this.seamGradient) this.seamGradient.setPosition(WORLD_W * 0.5 + Math.sin(state.sceneTime * 0.28) * 10, nearSeamY - 1);
+      if (this.seamNoise) this.seamNoise.setPosition(WORLD_W * 0.5 + Math.sin(state.sceneTime * 0.34) * 18, nearSeamY);
+      if (this.seamBlend) this.seamBlend.setPosition(WORLD_W * 0.5, nearSeamY + 2);
+      if (this.upperSeamNoise) this.upperSeamNoise.setPosition(WORLD_W * 0.5 + Math.sin(state.sceneTime * 0.31 + 0.9) * 15, upperSeamY);
+      if (this.upperSeamBlend) this.upperSeamBlend.setPosition(WORLD_W * 0.5, upperSeamY + 1);
+      if (this.seamDustNear) {
+        this.seamDustNear.setPosition(WORLD_W * 0.5, nearSeamY);
+        this.seamDustNear.tilePositionX = state.sceneTime * (midSpeed * 0.55);
+      }
+      if (this.seamDustUpper) {
+        this.seamDustUpper.setPosition(WORLD_W * 0.5, upperSeamY);
+        this.seamDustUpper.tilePositionX = state.sceneTime * (farSpeed * 0.95 + midSpeed * 0.22);
+      }
 
       for (let i = 0; i < state.clouds.length; i += 1) {
         const c = state.clouds[i];
@@ -2647,6 +2734,23 @@
       state.hazards.push(hazard);
     }
 
+    spawnFailSnake() {
+      const hazard = this.createSnakeHazard();
+      const destX = WORLD_W + 90 + Math.random() * 170;
+      const deltaX = destX - hazard.x;
+      hazard.x = destX;
+      hazard.speedMul = 0.58 + Math.random() * 0.1;
+      hazard.deathPose = false;
+      hazard.postFailPhase = "";
+      hazard.postFailBites = 0;
+      hazard.postFailTimer = 0;
+      hazard.postFailRetreatX = null;
+      hazard.flipX = false;
+      hazard.isFailKiller = false;
+      this.positionHazardVisual(hazard, deltaX);
+      state.hazards.push(hazard);
+    }
+
     spawnFailEagle() {
       const hazard = this.createEagleHazard();
       const mustPeckFirstPass = state.failEaglePassCount === 0;
@@ -2723,8 +2827,14 @@
 
             state.nextHazardIn -= dt;
             if (state.nextHazardIn <= 0) {
-              if (state.failEaglePassCount === 0 || Math.random() < 0.5) this.spawnFailEagle();
-              else this.spawnFailTumbleweed();
+              if (state.failEaglePassCount === 0) {
+                this.spawnFailEagle();
+              } else {
+                const roll = Math.random();
+                if (roll < FAIL_EAGLE_SPAWN_CHANCE) this.spawnFailEagle();
+                else if (roll < FAIL_EAGLE_SPAWN_CHANCE + FAIL_SNAKE_SPAWN_CHANCE) this.spawnFailSnake();
+                else this.spawnFailTumbleweed();
+              }
               state.nextHazardIn = 1.5 + Math.random() * 1.9;
             }
 
@@ -2778,6 +2888,7 @@
 
         if (state.autoPlay) {
           const jumpDecision = this.getAutoJumpDecision();
+          if (jumpDecision?.armCombo) input.diveHeld = true;
           if (jumpDecision?.shouldJump) input.jumpPressed = true;
           const eagleJump = this.getAutoEagleJumpDecision();
           if (eagleJump?.armCombo) {
