@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-21-2301";
+  const BUILD_ID = "2026-02-21-2312";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -138,6 +138,9 @@
     failWindTrack: null,
     failWindTrackReady: false,
     failWindUsingTrack: false,
+    failWindTrackPrimed: false,
+    failWindPrimeAttempts: 0,
+    failWindPrimeSuccesses: 0,
     lastFailWindError: "",
     audioUnlockAttempts: 0,
     audioUnlockSuccesses: 0,
@@ -279,6 +282,52 @@
       state.failWindTrack = null;
     }
     return state.failWindTrack;
+  }
+
+  function primeFailWindTrackFromGesture() {
+    const track = ensureFailWindTrack();
+    if (!track || state.failWindTrackPrimed) return;
+    state.failWindPrimeAttempts += 1;
+    const restoreState = () => {
+      track.muted = Boolean(state.soundMuted);
+      track.volume = state.soundMuted ? 0 : FAIL_WIND_TRACK_VOLUME;
+    };
+    try {
+      track.muted = true;
+      track.volume = 0;
+      if (track.paused) {
+        const playAttempt = track.play();
+        if (playAttempt?.then) {
+          playAttempt
+            .then(() => {
+              state.failWindTrackPrimed = true;
+              state.failWindPrimeSuccesses += 1;
+              track.pause();
+              try {
+                track.currentTime = 0;
+              } catch (_error) {
+                // Ignore seek failures before metadata is ready.
+              }
+              restoreState();
+            })
+            .catch((error) => {
+              state.lastFailWindError = String(error?.message || error || "Failed to prime fail wind track.");
+              restoreState();
+            });
+        } else {
+          state.failWindTrackPrimed = true;
+          state.failWindPrimeSuccesses += 1;
+          restoreState();
+        }
+      } else {
+        state.failWindTrackPrimed = true;
+        state.failWindPrimeSuccesses += 1;
+        restoreState();
+      }
+    } catch (error) {
+      state.lastFailWindError = String(error?.message || error || "Prime wind track exception.");
+      restoreState();
+    }
   }
 
   function applySoundState(immediate = false) {
@@ -684,6 +733,9 @@
           failWindUsingTrack: state.failWindUsingTrack,
           failWindTrackReady: state.failWindTrackReady,
           failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+          failWindTrackPrimed: state.failWindTrackPrimed,
+          failWindPrimeAttempts: state.failWindPrimeAttempts,
+          failWindPrimeSuccesses: state.failWindPrimeSuccesses,
           lastFailWindError: state.lastFailWindError,
           unlockAttempts: state.audioUnlockAttempts,
           unlockSuccesses: state.audioUnlockSuccesses,
@@ -1089,6 +1141,7 @@
 
     unlockAudioFromGesture() {
       activateAudio();
+      primeFailWindTrackFromGesture();
       if (!state.audioCtx) return;
       state.audioUnlockAttempts += 1;
       state.lastAudioUnlockAt = Date.now();
@@ -1446,6 +1499,9 @@
             failWindUsingTrack: state.failWindUsingTrack,
             failWindTrackReady: state.failWindTrackReady,
             failWindTrackPaused: state.failWindTrack ? state.failWindTrack.paused : null,
+            failWindTrackPrimed: state.failWindTrackPrimed,
+            failWindPrimeAttempts: state.failWindPrimeAttempts,
+            failWindPrimeSuccesses: state.failWindPrimeSuccesses,
             lastFailWindError: state.lastFailWindError,
             soundMuted: state.soundMuted,
             unlockAttempts: state.audioUnlockAttempts,
