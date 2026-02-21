@@ -307,3 +307,20 @@ TODO
     - `node --check phaser-game.js`
     - `node --check scripts/playwright-game-tests.mjs`
     - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+- 2026-02-21 22:54: iPhone pre-death WebAudio reliability + MP3 range support
+  - Addressed pre-death generated-audio silence concerns:
+    - added broader global gesture unlock listeners (`pointerdown`/`touchend`/`click`) in addition to game-wrap listeners.
+    - on `pageshow`/`visibilitychange` return, app now retries audio unlock/resume.
+    - increased music/sfx gain slightly for better audibility on iPhone speakers.
+  - Added MP3 byte-range handling in Worker for iOS Safari compatibility:
+    - `worker.js` now parses `Range: bytes=...` and returns `206 Partial Content` with `Content-Range` + `Accept-Ranges: bytes` for MP3 requests.
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2254`
+    - cache-bust query in `index.html` updated to `20260221-2254`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `node --check worker.js`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+    - deployed MP3 currently observed as `200` for range request before this worker patch; patch now adds explicit `206` handling.

@@ -14,7 +14,7 @@
   const BACKGROUND_SCROLL_SPEED = 10;
   const CLOUD_SCROLL_SPEED = BACKGROUND_SCROLL_SPEED * 2;
   const MAX_RUN_SPEED = Math.round(770 * 0.75);
-  const BUILD_ID = "2026-02-21-2246";
+  const BUILD_ID = "2026-02-21-2254";
   const TOUCH_GUIDE_HIDE_SECONDS = 4.2;
   const DOUBLE_TAP_WINDOW_MS = 280;
   const AUTO_TAP_SEQUENCE_WINDOW_MS = 920;
@@ -29,6 +29,7 @@
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
   const FAIL_WIND_TRACK_URL = "./assets/world/tanweraman-desert-wind-1-350398.mp3";
   const FAIL_WIND_TRACK_VOLUME = 0.46;
+  const MUSIC_MASTER_GAIN = 0.34;
   const HAZARD_SHADOW_DEPTH = 168;
   const HAZARD_BODY_DEPTH = 176;
   const AIR_JOY_CHANCE = 0.18;
@@ -247,7 +248,7 @@
     state.audioReady = true;
 
     const musicGain = ac.createGain();
-    musicGain.gain.value = state.soundMuted ? 0.00001 : 0.22;
+    musicGain.gain.value = state.soundMuted ? 0.00001 : MUSIC_MASTER_GAIN;
     musicGain.connect(ac.destination);
     state.musicGain = musicGain;
     ac.onstatechange = () => {
@@ -282,7 +283,7 @@
 
   function applySoundState(immediate = false) {
     if (state.musicGain && state.audioCtx) {
-      const target = state.soundMuted ? 0.00001 : 0.22;
+      const target = state.soundMuted ? 0.00001 : MUSIC_MASTER_GAIN;
       if (immediate) state.musicGain.gain.setValueAtTime(target, state.audioCtx.currentTime);
       else state.musicGain.gain.setTargetAtTime(target, state.audioCtx.currentTime, 0.04);
     }
@@ -341,8 +342,8 @@
       if (state.soundMuted) return;
       const i = state.musicStep % state.musicPattern.length;
       const root = state.musicPattern[i];
-      playPianoNote(root, 0.22, 0.11);
-      if (i % 2 === 0) playPianoNote(root - 12, 0.16, 0.055);
+      playPianoNote(root, 0.22, 0.13);
+      if (i % 2 === 0) playPianoNote(root - 12, 0.16, 0.065);
       state.musicStep += 1;
     };
     tick();
@@ -478,7 +479,7 @@
     if (!state.audioCtx || state.soundMuted) return;
     const ac = state.audioCtx;
     const gain = ac.createGain();
-    gain.gain.value = 0.13;
+    gain.gain.value = 0.17;
     gain.connect(ac.destination);
 
     const osc = ac.createOscillator();
@@ -1159,7 +1160,10 @@
     bindViewportSync() {
       if (!IS_TOUCH_FULLSCREEN) return;
       this.viewportSyncHandler = () => this.refreshViewportSizing();
-      this.pageShowHandler = () => this.refreshViewportSizing(true);
+      this.pageShowHandler = () => {
+        this.refreshViewportSizing(true);
+        if (document.visibilityState === "visible") this.unlockAudioFromGesture();
+      };
       window.addEventListener("resize", this.viewportSyncHandler, { passive: true });
       window.addEventListener("orientationchange", this.viewportSyncHandler, { passive: true });
       window.addEventListener("pageshow", this.pageShowHandler, { passive: true });
@@ -1342,6 +1346,10 @@
         this.gameWrapEl.addEventListener("mousedown", this.wrapGestureUnlock, { passive: true });
         this.gameWrapEl.addEventListener("click", this.wrapGestureUnlock, { passive: true });
       }
+      this.globalGestureUnlock = () => this.unlockAudioFromGesture();
+      window.addEventListener("pointerdown", this.globalGestureUnlock, { passive: true });
+      window.addEventListener("touchend", this.globalGestureUnlock, { passive: true });
+      window.addEventListener("click", this.globalGestureUnlock, { passive: true });
       window.addEventListener("pointerup", this.wrapPointerUp, { passive: true });
       window.addEventListener("pointercancel", this.wrapPointerUp, { passive: true });
 
@@ -1358,6 +1366,9 @@
           this.gameWrapEl.removeEventListener("mousedown", this.wrapGestureUnlock);
           this.gameWrapEl.removeEventListener("click", this.wrapGestureUnlock);
         }
+        window.removeEventListener("pointerdown", this.globalGestureUnlock);
+        window.removeEventListener("touchend", this.globalGestureUnlock);
+        window.removeEventListener("click", this.globalGestureUnlock);
         window.removeEventListener("pointerup", this.wrapPointerUp);
         window.removeEventListener("pointercancel", this.wrapPointerUp);
         this.activeTouchGestures.clear();
