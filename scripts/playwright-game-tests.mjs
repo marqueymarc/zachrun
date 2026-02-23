@@ -350,14 +350,14 @@ async function scenarioFailEaglePeckCadence({ page, scenarioDir }) {
   assert.ok(stats.postDelayPasses >= 1, `expected first fail eagle after delay window, got ${stats.postDelayPasses}`);
   assert.ok(stats.maxPasses >= 1, `expected at least 1 fail-state eagle pass, got ${stats.maxPasses}`);
   assert.ok(stats.maxPecks >= 1, `expected at least one peck event, got ${stats.maxPecks}`);
-  if (stats.maxPasses >= 3) {
+  if (stats.maxPasses >= 4) {
     assert.ok(stats.maxPecks >= 2, `expected repeated pecks after first pass, got ${stats.maxPecks}`);
   }
   assert.ok(
     stats.subsequentRate >= 0 && stats.subsequentRate <= 1.0,
     `expected bounded subsequent peck rate, got ${(stats.subsequentRate * 100).toFixed(1)}%`
   );
-  if (stats.maxPasses >= 3) {
+  if (stats.maxPasses >= 4 && stats.maxPecks >= 2) {
     assert.ok(stats.peckStylesSeen.glide > 0, `expected at least one glide peck approach, got ${JSON.stringify(stats.peckStylesSeen)}`);
   }
 

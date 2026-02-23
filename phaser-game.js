@@ -30,6 +30,9 @@
   const FAIL_FIRST_PASS_DELAY_SECONDS = 5;
   const FAIL_EAGLE_SPAWN_CHANCE = 0.08;
   const FAIL_SNAKE_SPAWN_CHANCE = 0.7;
+  const FAIL_HAZARD_INTERVAL_MIN = 2.8;
+  const FAIL_HAZARD_INTERVAL_MAX = 4.6;
+  const FAIL_MAX_ACTIVE_HAZARDS = 2;
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
   const FAIL_WIND_TRACK_ROUTE_URL = "/audio/fail-wind.mp3";
   const FAIL_WIND_TRACK_ASSET_URL = "/assets/world/tanweraman-desert-wind-1-350398.mp3";
@@ -85,6 +88,8 @@
     failEaglePeckCursor: 0,
     failEaglePeckEvents: 0,
     failEagleUseGlideNext: true,
+    failLastSpawnType: "",
+    failSpawnRepeatCount: 0,
     clouds: [
       { x: 120, y: 34, speedMul: 1.0, scale: 0.42 },
       { x: 740, y: 58, speedMul: 0.92, scale: 0.38 },
@@ -1626,6 +1631,8 @@
       state.failEaglePeckCursor = Math.floor(Math.random() * FAIL_EAGLE_PECK_PATTERN.length);
       state.failEaglePeckEvents = 0;
       state.failEagleUseGlideNext = true;
+      state.failLastSpawnType = "";
+      state.failSpawnRepeatCount = 0;
       state.failAnimTime = 0;
       state.hitHazardId = null;
       state.lastError = "";
@@ -2278,6 +2285,8 @@
       state.failEaglePeckCursor = Math.floor(Math.random() * FAIL_EAGLE_PECK_PATTERN.length);
       state.failEaglePeckEvents = 0;
       state.failEagleUseGlideNext = true;
+      state.failLastSpawnType = "";
+      state.failSpawnRepeatCount = 0;
       state.failAnimTime = 0.95;
       state.hitHazardId = hitHazard?.id ?? null;
       if (state.autoPlay) {
@@ -2302,6 +2311,20 @@
 
       for (const h of state.hazards) {
         if (h.type === "snake") h.isFailKiller = false;
+      }
+
+      const keepHazardIds = new Set();
+      if (hitHazard && (reason === "killed by a snake bite" || reason === "hit by an eagle")) {
+        keepHazardIds.add(hitHazard.id);
+      }
+      state.hazards = state.hazards.filter((h) => {
+        if (keepHazardIds.has(h.id)) return true;
+        this.destroyHazard(h);
+        return false;
+      });
+      if (reason === "hit by an eagle" && hitHazard) {
+        // The killer eagle is already on-screen; avoid forcing an extra immediate eagle cycle.
+        state.failEaglePassCount = Math.max(state.failEaglePassCount, 1);
       }
 
       if (reason === "killed by a snake bite" && hitHazard) {
@@ -2827,15 +2850,37 @@
 
             state.nextHazardIn -= dt;
             if (state.nextHazardIn <= 0) {
-              if (state.failEaglePassCount === 0) {
-                this.spawnFailEagle();
+              const activeHazards = state.hazards.filter((h) => !(h.type === "snake" && h.isFailKiller && h.id === state.hitHazardId)).length;
+              if (activeHazards >= FAIL_MAX_ACTIVE_HAZARDS) {
+                state.nextHazardIn = 0.9 + Math.random() * 1.2;
               } else {
-                const roll = Math.random();
-                if (roll < FAIL_EAGLE_SPAWN_CHANCE) this.spawnFailEagle();
-                else if (roll < FAIL_EAGLE_SPAWN_CHANCE + FAIL_SNAKE_SPAWN_CHANCE) this.spawnFailSnake();
+                let spawnType = "";
+                if (state.failEaglePassCount === 0) {
+                  spawnType = "eagle";
+                } else {
+                  const roll = Math.random();
+                  if (roll < FAIL_EAGLE_SPAWN_CHANCE) spawnType = "eagle";
+                  else if (roll < FAIL_EAGLE_SPAWN_CHANCE + FAIL_SNAKE_SPAWN_CHANCE) spawnType = "snake";
+                  else spawnType = "tumbleweed";
+
+                  if (spawnType === state.failLastSpawnType && state.failSpawnRepeatCount >= 1) {
+                    if (spawnType === "eagle") spawnType = Math.random() < 0.75 ? "tumbleweed" : "snake";
+                    else if (spawnType === "snake") spawnType = Math.random() < 0.72 ? "tumbleweed" : "eagle";
+                    else spawnType = Math.random() < 0.66 ? "snake" : "eagle";
+                  }
+                }
+
+                if (spawnType === "eagle") this.spawnFailEagle();
+                else if (spawnType === "snake") this.spawnFailSnake();
                 else this.spawnFailTumbleweed();
+
+                if (spawnType === state.failLastSpawnType) state.failSpawnRepeatCount += 1;
+                else {
+                  state.failLastSpawnType = spawnType;
+                  state.failSpawnRepeatCount = 0;
+                }
+                state.nextHazardIn = FAIL_HAZARD_INTERVAL_MIN + Math.random() * (FAIL_HAZARD_INTERVAL_MAX - FAIL_HAZARD_INTERVAL_MIN);
               }
-              state.nextHazardIn = 1.5 + Math.random() * 1.9;
             }
 
             for (const h of state.hazards) {
