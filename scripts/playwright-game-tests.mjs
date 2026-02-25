@@ -156,6 +156,46 @@ async function scenarioHazardQueue({ page, scenarioDir }) {
   await fs.writeFile(path.join(scenarioDir, "spawned.json"), JSON.stringify(spawned, null, 2));
 }
 
+async function scenarioRockArchDuck({ page, scenarioDir }) {
+  const failCheck = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.spawnHazard("rockarch", { x: 545, speedMul: 0.74 });
+    for (let i = 0; i < 170; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      if (state.mode === "failed") break;
+    }
+    return window.__zackTest.getState();
+  });
+  assert.equal(failCheck.mode, "failed", "expected failure if player does not duck under rock arch");
+  assert.equal(failCheck.failReason, "hit a rock arch", `expected rock arch fail reason, got ${failCheck.failReason}`);
+
+  const passCheck = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.spawnHazard("rockarch", { x: 560, speedMul: 0.72 });
+    window.__zackTest.setTouches({ left: 1, right: 0 });
+    for (let i = 0; i < 210; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      if (state.mode === "failed") break;
+      if ((state.hazards || []).length === 0) break;
+    }
+    window.__zackTest.setTouches({ left: 0, right: 0 });
+    const state = window.__zackTest.getState();
+    return {
+      mode: state.mode,
+      failReason: state.failReason || "",
+      hazardsRemaining: (state.hazards || []).length,
+    };
+  });
+  assert.equal(passCheck.mode, "running", `expected duck to survive rock arch, got ${JSON.stringify(passCheck)}`);
+  assert.ok(passCheck.hazardsRemaining === 0 || passCheck.hazardsRemaining === 1, `unexpected rock arch pass state: ${JSON.stringify(passCheck)}`);
+  await page.screenshot({ path: path.join(scenarioDir, "rock-arch-duck.png"), fullPage: true });
+  await fs.writeFile(path.join(scenarioDir, "rock-arch.json"), JSON.stringify({ failCheck, passCheck }, null, 2));
+}
+
 async function scenarioComboJumpAndBigTumbleweed({ page, scenarioDir }) {
   const normalJumpMinY = await page.evaluate(async () => {
     await window.__zackTest.resetRun({ autoPlay: false });
@@ -420,6 +460,7 @@ async function main() {
       ["touch-holds", scenarioTouchHolds],
       ["double-tap-autoplay", scenarioDoubleTapAutoplay],
       ["hazard-queue", scenarioHazardQueue],
+      ["rock-arch-duck", scenarioRockArchDuck],
       ["combo-jump-big-tumbleweed", scenarioComboJumpAndBigTumbleweed],
       ["snake-fail-sequence", scenarioSnakeFailSequence],
       ["eagle-flight-variety", scenarioEagleFlightVariety],

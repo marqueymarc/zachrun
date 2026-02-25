@@ -33,6 +33,7 @@
   const FAIL_HAZARD_INTERVAL_MIN = 2.8;
   const FAIL_HAZARD_INTERVAL_MAX = 4.6;
   const FAIL_MAX_ACTIVE_HAZARDS = 2;
+  const ROCK_ARCH_SPAWN_CHANCE = 0.19;
   const FAIL_EAGLE_PECK_PATTERN = [true, false, false, true, false, false, false, true, false, false];
   const FAIL_WIND_TRACK_ROUTE_URL = "/audio/fail-wind.mp3";
   const FAIL_WIND_TRACK_ASSET_URL = "/assets/world/tanweraman-desert-wind-1-350398.mp3";
@@ -83,6 +84,7 @@
     hazardIdSeq: 0,
     hazardsSinceSnake: 0,
     hazardsSinceEagle: 0,
+    hazardsSinceRock: 0,
     failReason: "",
     failEaglePassCount: 0,
     failEaglePeckCursor: 0,
@@ -201,6 +203,7 @@
   function normalizeHazardType(type) {
     if (typeof type !== "string") return null;
     const value = type.trim().toLowerCase();
+    if (value === "rock-arch" || value === "rockarch" || value === "arch") return "rockarch";
     if (value === "snake" || value === "eagle" || value === "tumbleweed") return value;
     return null;
   }
@@ -591,6 +594,8 @@
       this.load.image("eagle2", "./assets/world/eagle2.png");
       this.load.image("eagle1Shadow", "./assets/world/eagle1_shadow.png");
       this.load.image("eagle2Shadow", "./assets/world/eagle2_shadow.png");
+      this.load.image("rockArch", "./assets/world/rock_arch.png");
+      this.load.image("rockArchShadow", "./assets/world/rock_arch_shadow.png");
     }
 
     create() {
@@ -704,6 +709,8 @@
               ? this.createSnakeHazard()
               : hazardType === "eagle"
                 ? this.createEagleHazard()
+                : hazardType === "rockarch"
+                  ? this.createRockArchHazard()
                 : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0, Boolean(options.big));
 
           const targetX = Number.isFinite(options.x) ? options.x : state.player.x + 500;
@@ -1626,6 +1633,7 @@
       state.hazardIdSeq = 0;
       state.hazardsSinceSnake = 0;
       state.hazardsSinceEagle = 0;
+      state.hazardsSinceRock = 0;
       state.failReason = "";
       state.failEaglePassCount = 0;
       state.failEaglePeckCursor = Math.floor(Math.random() * FAIL_EAGLE_PECK_PATTERN.length);
@@ -1811,7 +1819,7 @@
       let candidate = null;
 
       for (const h of state.hazards) {
-        if (h.type === "eagle") continue;
+        if (h.type === "eagle" || h.type === "rockarch") continue;
         const speed = Math.max(120, state.speed * (h.speedMul || 1));
         const frontDist = h.x - playerRight;
         const backDist = h.x + (h.visibleW || 120) - playerLeft;
@@ -1860,6 +1868,26 @@
       if (!state.autoPlay || state.mode !== "running" || !p.onGround) return false;
       const playerLeft = p.x - p.width * 0.25;
       const playerRight = p.x + p.width * 0.25;
+      for (const h of state.hazards) {
+        if (h.type !== "rockarch") continue;
+        const speed = Math.max(120, state.speed * (h.speedMul || 1));
+        const tFront = (h.x - playerRight) / speed;
+        const tBack = (h.x + (h.visibleW || 120) - playerLeft) / speed;
+        if (tBack < -0.06 || tFront > 0.62) continue;
+        if (tFront <= 0.34 && tBack >= -0.08) {
+          pushAutoLog("duck-check", {
+            hazardId: h.id,
+            type: h.type,
+            tFront: Number(tFront.toFixed(3)),
+            tBack: Number(tBack.toFixed(3)),
+            speed: Math.round(speed),
+            width: Math.round(h.visibleW || 0),
+            height: Math.round(h.visibleH || 0),
+            shouldDuck: true,
+          });
+          return true;
+        }
+      }
       for (const h of state.hazards) {
         if (h.type !== "eagle") continue;
         if (!h.autoAction) h.autoAction = h.flightBand === "low" ? "jump" : "duck";
@@ -2071,20 +2099,61 @@
       };
     }
 
+    createRockArchHazard() {
+      const tex = this.textures.get("rockArch").getSourceImage();
+      const targetH = 174 + Math.random() * 26;
+      const scale = targetH / tex.height;
+      const visibleW = tex.width * scale;
+      const visibleH = tex.height * scale;
+      const x = WORLD_W + 120;
+      const yFloor = FLOOR_Y + 2;
+      const shadow = this.add
+        .image(x + visibleW * 0.5, yFloor + 16, "rockArchShadow")
+        .setScale(scale * 0.9, scale * 0.72)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setAlpha(0.3)
+        .setDepth(HAZARD_SHADOW_DEPTH - 2);
+      const sprite = this.add
+        .image(x + visibleW * 0.5, yFloor - visibleH * 0.5, "rockArch")
+        .setScale(scale)
+        .setDepth(HAZARD_BODY_DEPTH - 1);
+      return {
+        id: ++state.hazardIdSeq,
+        type: "rockarch",
+        x,
+        yFloor,
+        visibleW,
+        visibleH,
+        radius: Math.max(24, visibleH * 0.24),
+        rotation: 0,
+        spin: 0,
+        speedMul: 0.93 + Math.random() * 0.1,
+        enteredAt: null,
+        autoAction: "duck",
+        sprite,
+        shadow,
+      };
+    }
+
     spawnHazard() {
       const queuedType = normalizeHazardType(state.testSpawnQueue[0]);
       if (queuedType) state.testSpawnQueue.shift();
       const mustSnake = state.hazardsSpawned > 2 && state.hazardsSinceSnake >= 3;
       const mustEagle = state.hazardsSpawned > 2 && state.hazardsSinceEagle >= 3;
-      const spawnEagle = mustEagle || (state.hazardsSpawned > 1 && Math.random() < 0.28);
+      const mustRock = state.hazardsSpawned > 3 && state.hazardsSinceRock >= 5;
+      const spawnRock = mustRock || (state.hazardsSpawned > 2 && Math.random() < ROCK_ARCH_SPAWN_CHANCE);
+      const spawnEagle = !spawnRock && (mustEagle || (state.hazardsSpawned > 1 && Math.random() < 0.28));
       const spawnSnake = !spawnEagle && (mustSnake || (state.hazardsSpawned > 1 && Math.random() < 0.34));
       const useSnake = queuedType ? queuedType === "snake" : spawnSnake;
       const useEagle = queuedType ? queuedType === "eagle" : spawnEagle;
+      const useRock = queuedType ? queuedType === "rockarch" : spawnRock;
       const hazard = useEagle
         ? this.createEagleHazard()
         : useSnake
           ? this.createSnakeHazard()
-          : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0);
+          : useRock
+            ? this.createRockArchHazard()
+            : this.createTumbleweedHazard(state.hazardsSpawned % 2 === 0);
 
       const baseSpawnX =
         state.hazardsSpawned === 0 ? WORLD_W + 90 + Math.random() * 140 : WORLD_W + 340 + Math.random() * 220;
@@ -2099,6 +2168,7 @@
       state.hazardsSpawned += 1;
       state.hazardsSinceSnake = useSnake ? 0 : state.hazardsSinceSnake + 1;
       state.hazardsSinceEagle = useEagle ? 0 : state.hazardsSinceEagle + 1;
+      state.hazardsSinceRock = useRock ? 0 : state.hazardsSinceRock + 1;
 
       state.hazardStreak += 1;
       const cadence = Math.max(0.52, 1 - state.time / 80);
@@ -2118,6 +2188,9 @@
       } else if (h.type === "eagle") {
         h.sprite.x += deltaX;
         h.shadow.x += deltaX;
+      } else if (h.type === "rockarch") {
+        h.sprite.x += deltaX;
+        if (h.shadow) h.shadow.x += deltaX;
       } else {
         if (h.back) h.back.x += deltaX;
         h.mulSprite.x += deltaX;
@@ -2171,6 +2244,13 @@
         h.sprite.setRotation(flap * 0.08);
         h.sprite.setScale((h.baseScale || 1) * (1 + flap * 0.03));
         h.sprite.setPosition(px, py - h.visibleH * 0.5);
+      } else if (h.type === "rockarch") {
+        const px = h.x + h.visibleW * 0.5;
+        const py = h.yFloor - h.visibleH * 0.5;
+        h.sprite.setPosition(px, py);
+        h.sprite.setRotation(0);
+        h.shadow.setPosition(px + 1, h.yFloor + 14);
+        h.shadow.alpha = 0.28;
       } else {
         const bounce = this.getHazardBounce(h);
         const px = h.x + h.visibleW * 0.5;
@@ -2409,7 +2489,7 @@
       this.playerShadow.height = shadowH;
       this.playerShadow.alpha = 0.34 - jumpAmount * 0.12;
 
-      const tumbleweedKO = state.mode === "failed" && state.failReason === "hit a tumbleweed";
+      const tumbleweedKO = state.mode === "failed" && (state.failReason === "hit a tumbleweed" || state.failReason === "hit a rock arch");
       const snakeKO = state.mode === "failed" && state.failReason === "killed by a snake bite";
       const eagleKO = state.mode === "failed" && state.failReason === "hit by an eagle";
       const deathScaleX = DEATH_POSE_SIZE_BOOST * DEATH_POSE_PERSPECTIVE_X;
@@ -3067,6 +3147,22 @@
           const neededClearance = h.type === "tumbleweed" && h.requiresHighJump ? 212 : state.autoPlay ? 48 : 56;
           const jumpedClear = p.y < FLOOR_Y - neededClearance;
 
+          if (h.type === "rockarch") {
+            const duckSafe = p.duck && p.onGround;
+            if (overlapX && !duckSafe) {
+              this.fail("hit a rock arch", h, {
+                overlapX,
+                duckSafe,
+                playerY: Number(p.y.toFixed(2)),
+                playerOnGround: Boolean(p.onGround),
+                playerDuck: Boolean(p.duck),
+                comboJumpActive: Boolean(p.comboJumpActive),
+              });
+              return;
+            }
+            continue;
+          }
+
           if (h.type === "eagle") {
             const eagleClearByCombo = p.comboJumpActive && p.y < FLOOR_Y - EAGLE_COMBO_CLEARANCE;
             const eagleNeedsJump = h.autoAction === "jump" || h.flightBand === "low";
@@ -3118,7 +3214,7 @@
           }
 
           if (this.circleRectOverlap(cx, cy, h.radius, pr)) {
-            this.fail(h.type === "snake" ? "killed by a snake bite" : "hit a tumbleweed", h);
+            this.fail(h.type === "snake" ? "killed by a snake bite" : h.type === "rockarch" ? "hit a rock arch" : "hit a tumbleweed", h);
             return;
           }
         }
