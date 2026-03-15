@@ -324,3 +324,12 @@ TODO
     - `node --check worker.js`
     - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
     - deployed MP3 currently observed as `200` for range request before this worker patch; patch now adds explicit `206` handling.
+- 2026-03-14 19:03: rock arch asset swap follow-up
+  - using `/assets/world/newarch.png` for the rock arch sprite.
+  - increased arch visual size and tightened collision so only ducking on ground or a sufficiently high combo jump clears it.
+  - regenerated `rock_arch_shadow.png` from the new transparent arch asset.
+  - updated Playwright rock-arch scenario to trigger combo jump deterministically via `window.__zackTest.comboJump()` instead of flaky timed touch input.
+- 2026-03-14 19:10: rock arch collision tuning completed
+  - converted rock arch collision from full-width overlap to a roof-zone overlap with horizontal inset.
+  - combo jump now latches clearance once Zack is high enough over the roof, preventing false failures on the back edge during descent.
+  - full Playwright scenario suite passes on local server after this change.

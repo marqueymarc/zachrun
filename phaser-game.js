@@ -594,7 +594,7 @@
       this.load.image("eagle2", "./assets/world/eagle2.png");
       this.load.image("eagle1Shadow", "./assets/world/eagle1_shadow.png");
       this.load.image("eagle2Shadow", "./assets/world/eagle2_shadow.png");
-      this.load.image("rockArch", "./assets/world/rock_arch.png");
+      this.load.image("rockArch", "./assets/world/newarch.png");
       this.load.image("rockArchShadow", "./assets/world/rock_arch_shadow.png");
     }
 
@@ -656,6 +656,15 @@
           }
           if (String(side).toLowerCase() === "right") input.jumpPressed = true;
           else input.diveHeld = true;
+          return getStatePayload();
+        },
+        comboJump: async () => {
+          if (state.mode !== "running") {
+            await this.startOrRestartRun();
+            return getStatePayload();
+          }
+          state.player.crouchComboTimer = COMBO_JUMP_WINDOW_SECONDS;
+          input.jumpPressed = true;
           return getStatePayload();
         },
         resetRun: async ({ autoPlay = false } = {}) => {
@@ -2101,15 +2110,15 @@
 
     createRockArchHazard() {
       const tex = this.textures.get("rockArch").getSourceImage();
-      const targetH = 174 + Math.random() * 26;
+      const targetH = 236 + Math.random() * 30;
       const scale = targetH / tex.height;
       const visibleW = tex.width * scale;
       const visibleH = tex.height * scale;
       const x = WORLD_W + 120;
-      const yFloor = FLOOR_Y + 2;
+      const yFloor = FLOOR_Y + 10;
       const shadow = this.add
         .image(x + visibleW * 0.5, yFloor + 16, "rockArchShadow")
-        .setScale(scale * 0.9, scale * 0.72)
+        .setScale(scale * 1.04, scale * 0.7)
         .setBlendMode(Phaser.BlendModes.MULTIPLY)
         .setAlpha(0.3)
         .setDepth(HAZARD_SHADOW_DEPTH - 2);
@@ -2130,6 +2139,9 @@
         speedMul: 0.93 + Math.random() * 0.1,
         enteredAt: null,
         autoAction: "duck",
+        roofInsetX: visibleW * 0.31,
+        overClearance: 214,
+        comboClearLatched: false,
         sprite,
         shadow,
       };
@@ -3148,11 +3160,20 @@
           const jumpedClear = p.y < FLOOR_Y - neededClearance;
 
           if (h.type === "rockarch") {
+            const roofInsetX = h.roofInsetX || h.visibleW * 0.3;
+            const roofLeft = hazardX + roofInsetX;
+            const roofRight = hazardX + h.visibleW - roofInsetX;
+            const roofOverlapX = roofLeft < bodyRight && roofRight > bodyLeft;
             const duckSafe = p.duck && p.onGround;
-            if (overlapX && !duckSafe) {
+            const comboJumpHighEnough = p.comboJumpActive && p.y < FLOOR_Y - (h.overClearance || 190);
+            if (roofOverlapX && comboJumpHighEnough) h.comboClearLatched = true;
+            const comboJumpSafe = Boolean(h.comboClearLatched);
+            if (roofOverlapX && !duckSafe && !comboJumpSafe) {
               this.fail("hit a rock arch", h, {
-                overlapX,
+                overlapX: roofOverlapX,
                 duckSafe,
+                comboJumpHighEnough,
+                comboJumpSafe,
                 playerY: Number(p.y.toFixed(2)),
                 playerOnGround: Boolean(p.onGround),
                 playerDuck: Boolean(p.duck),

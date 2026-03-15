@@ -171,7 +171,7 @@ async function scenarioRockArchDuck({ page, scenarioDir }) {
   assert.equal(failCheck.mode, "failed", "expected failure if player does not duck under rock arch");
   assert.equal(failCheck.failReason, "hit a rock arch", `expected rock arch fail reason, got ${failCheck.failReason}`);
 
-  const passCheck = await page.evaluate(async () => {
+  const duckPassCheck = await page.evaluate(async () => {
     await window.__zackTest.resetRun({ autoPlay: false });
     window.__zackTest.clearHazards();
     window.__zackTest.spawnHazard("rockarch", { x: 560, speedMul: 0.72 });
@@ -190,10 +190,55 @@ async function scenarioRockArchDuck({ page, scenarioDir }) {
       hazardsRemaining: (state.hazards || []).length,
     };
   });
-  assert.equal(passCheck.mode, "running", `expected duck to survive rock arch, got ${JSON.stringify(passCheck)}`);
-  assert.ok(passCheck.hazardsRemaining === 0 || passCheck.hazardsRemaining === 1, `unexpected rock arch pass state: ${JSON.stringify(passCheck)}`);
+  assert.equal(duckPassCheck.mode, "running", `expected duck to survive rock arch, got ${JSON.stringify(duckPassCheck)}`);
+  assert.ok(
+    duckPassCheck.hazardsRemaining === 0 || duckPassCheck.hazardsRemaining === 1,
+    `unexpected rock arch duck-pass state: ${JSON.stringify(duckPassCheck)}`
+  );
+
+  const jumpFailCheck = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.spawnHazard("rockarch", { x: 560, speedMul: 0.72 });
+    await window.__zackTest.tap("right");
+    for (let i = 0; i < 220; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      if (state.mode === "failed") break;
+    }
+    return window.__zackTest.getState();
+  });
+  assert.equal(jumpFailCheck.mode, "failed", `expected normal jump to fail at rock arch, got ${JSON.stringify(jumpFailCheck)}`);
+  assert.equal(jumpFailCheck.failReason, "hit a rock arch", `expected rock arch fail reason after normal jump, got ${jumpFailCheck.failReason}`);
+
+  const comboPassCheck = await page.evaluate(async () => {
+    await window.__zackTest.resetRun({ autoPlay: false });
+    window.__zackTest.clearHazards();
+    window.__zackTest.spawnHazard("rockarch", { x: 760, speedMul: 1.08 });
+    for (let i = 0; i < 90; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      const arch = (state.hazards || []).find((h) => h.type === "rockarch");
+      if (!arch) break;
+      if (arch.x - state.player.x < 210) {
+        await window.__zackTest.comboJump();
+        break;
+      }
+    }
+    for (let i = 0; i < 220; i += 1) {
+      await window.__zackTest.step(16);
+      const state = window.__zackTest.getState();
+      if (state.mode === "failed") break;
+      if ((state.hazards || []).length === 0) break;
+    }
+    return window.__zackTest.getState();
+  });
+  assert.equal(comboPassCheck.mode, "running", `expected combo jump to clear rock arch, got ${JSON.stringify(comboPassCheck)}`);
   await page.screenshot({ path: path.join(scenarioDir, "rock-arch-duck.png"), fullPage: true });
-  await fs.writeFile(path.join(scenarioDir, "rock-arch.json"), JSON.stringify({ failCheck, passCheck }, null, 2));
+  await fs.writeFile(
+    path.join(scenarioDir, "rock-arch.json"),
+    JSON.stringify({ failCheck, duckPassCheck, jumpFailCheck, comboPassCheck }, null, 2)
+  );
 }
 
 async function scenarioComboJumpAndBigTumbleweed({ page, scenarioDir }) {
