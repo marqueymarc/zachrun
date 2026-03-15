@@ -76,3 +76,260 @@ TODO
   - Strengthened autoplay timing with larger snake-safe jump window plus collision rescue cooldown to keep autoplay reliable despite zoom/pan + drift.
   - Build/version bumped to `2026-02-19-1241`; cache bust query updated to `20260219-1241`.
   - Live check: autoplay remained `mode=running` after 8s at high speed with active hazards (no fail).
+- 2026-02-19 15:30: Zack sprite normalization follow-up (joy sizing)
+  - Root cause: browser cache was still loading `phaser-game.js?v=20260219-1702` from `index.html`, so newer normalization tweaks were not guaranteed to load.
+  - Updated cache-bust params in `index.html` to `20260219-1730` for both CSS and JS.
+  - Added `PLAYER_VISUAL_SIZE_BIAS` map and applied it after per-texture normalization so all transforms are relative to normalized scale.
+  - Tuned key sprite biases: `jump 0.98`, `joy 0.90`, `horror 0.94` (`run1/run2` remain `1.0`) to reduce oversized airborne joy frame.
+  - Kept fail/duck transforms multiplicative on normalized scale so camera/pose transforms stay consistent.
+  - Node syntax check passed (`node --check phaser-game.js`).
+  - Automated run via web-game playwright client confirms build `2026-02-19-1730` is active and hazards run/fail loop still works.
+- 2026-02-20 10:10: fixed black automated screenshots (WebGL capture path)
+  - Root cause: Playwright game client captures canvas via `toDataURL`; with default WebGL buffer behavior this could return opaque black frames.
+  - Added Phaser renderer config in `phaser-game.js`:
+    - `render.preserveDrawingBuffer = true`
+    - `render.antialias = true`
+  - Bumped build id to `2026-02-20-1010` and cache-bust query params in `index.html`.
+  - Added `<link rel="icon" href="data:," />` to suppress favicon 404 noise during automated runs.
+  - Verified with fresh headless artifacts:
+    - `output/web-game-build-20260220-1010c/shot-0.png`
+    - `output/web-game-build-20260220-1010c/shot-1.png`
+    - `output/web-game-build-20260220-1010c/state-0.json`
+    - `output/web-game-build-20260220-1010c/state-1.json`
+  - Verification outcome: screenshots are fully rendered (non-black), game state advances, and no `errors-*.json` emitted in this run.
+- 2026-02-20 12:16: HUD/gameplay polish + post-hit hazard behavior
+  - Build bumped to `2026-02-20-1216`; cache-bust query in `index.html` updated to `20260220-1216`.
+  - HUD text switched to timer format: `Alive: m:ss` and `Best m:ss`.
+  - HUD now prefers DOM overlay (camera-independent) and only creates canvas HUD fallback when DOM is missing.
+  - Added robust fullscreen toggle path (`F`) with keyboard fallback via DOM Fullscreen API when Phaser fullscreen is unavailable.
+  - Increased joy sprite normalization (`PLAYER_VISUAL_SIZE_BIAS.joy = 1.12`) and increased flip scale (+10% from prior) to keep flips visually larger.
+  - Fixed invisible KO pool bug: splat ellipses now use non-zero fill alpha at creation; KO red pool now renders with stronger opacity.
+  - Tumbleweed shadow behavior adjusted to stay just below the weed and drift lower/wider only when bounce lift is high.
+  - Eagle shadows now project on the ground (not on bird body), with dynamic scale/alpha by altitude.
+  - Eagle hit behavior updated: after eagle collision/fail, eagle continues flight with slight impact drop rather than freezing.
+  - Snake post-kill behavior updated: bite near Zack, wander right, return for another bite phase, then wander off left.
+  - Validation:
+    - `node --check phaser-game.js` passes.
+    - local server verified via `curl -I http://127.0.0.1:5173` (`200 OK`) in persistent TTY session.
+    - automated runs via web-game client (build `2026-02-20-1216`) produced fresh screenshots/states without runtime errors:
+      - `output/web-game-build-20260220-1216-enter/*`
+      - `output/web-game-build-20260220-1216-long/*`
+      - `output/web-game-build-20260220-1216-verify/*`
+      - `output/web-game-build-20260220-1216-eaglecheck/*`
+      - `output/web-game-build-20260220-1216-eagleshadow/*`
+- 2026-02-20 12:23: HUD/death visibility + eagle shadow alpha fixes
+  - Fixed missing HUD by enabling DOM overlay in `/styles.css` (`.hud-overlay` was inadvertently `display: none`).
+  - Bumped build to `2026-02-20-1223`; cache-bust query updated to `20260220-1223` in `index.html`.
+  - Fixed missing Zack on death by:
+    - forcing full-body texture (`run1`) for failed pose,
+    - setting explicit render depths so Zack sprite is above red splat pool.
+  - Eagle shadow handling updated to rely on PNG embedded transparency (removed runtime alpha dimming; keep alpha at 1).
+  - Verified local runtime with automated capture on `?v=20260220-1223`; fail frame now clearly shows Zack + red pool.
+- 2026-02-20 19:22: iPhone touch/fullscreen + tap start/restart refinements
+  - Added coarse-pointer fullscreen behavior in CSS (`.game-wrap` fills `100vw x 100dvh`) and switched Phaser scale mode to `ENVELOP` on touch devices for full-screen presentation.
+  - Reworked pointer handling to DOM-level listeners on `#game-wrap` so left/right touch zones use screen position (not world coords), including active-pointer tracking for holds and movement updates.
+  - Single tap now starts from menu and restarts after fail (`state.mode !== "running"` starts run).
+  - Touch guide now auto-hides after ~4.2s during running; still visible on menu.
+  - Updated status/fail messaging to "Tap anywhere" wording; bumped build/cache IDs to `2026-02-20-1918` / `20260220-1918`.
+  - Validation:
+    - `node --check phaser-game.js` passes.
+    - local server verified with `curl -I http://127.0.0.1:5173` (`200 OK`) in persistent TTY session.
+    - Playwright web-game client snapshots/state:
+      - `output/web-game-build-20260220-1918/shot-0.png`
+      - `output/web-game-build-20260220-1918/state-0.json` (mode=running, score=5, build=2026-02-20-1918)
+      - `output/web-game-build-20260220-1918-restart/shot-0.png`
+      - `output/web-game-build-20260220-1918-restart/state-0.json` (mode=running after forced fail + tap restart sequence)
+- 2026-02-20 20:00: deterministic test API + Playwright scenario suite
+  - Added `?test=1` test control API in `phaser-game.js` via `window.__zackTest` with methods to drive game state directly:
+    - `getState`, `getInput`, `step`, `setTouches`, `tap`, `resetRun`, `setMode`, `setElapsed`
+    - `clearHazards`, `queueHazards`, `spawnNextHazard`, `spawnHazard`, `forceFail`
+    - `getKillerSnakePhase`, `getPlayerDeathJolt`
+  - Added forced spawn queue support (`state.testSpawnQueue`) so tests can request explicit antagonist order.
+  - Added snake-bite death body jolt: dead Zack now hops slightly on each killer-snake bite in fail choreography.
+  - Build/cache bump to `2026-02-20-1948` / `20260220-1948`.
+  - Added Playwright scenario runner:
+    - `scripts/playwright-game-tests.mjs`
+    - `scripts/run-playwright-game-tests.sh`
+  - Scenario coverage implemented and passing:
+    - single-tap start/restart
+    - touch guide auto-hide timing
+    - left/right touch hold mapping
+    - queued hazard spawn order
+    - snake fail phase sequence + player jolt assertion
+  - Verified via local run against `http://127.0.0.1:5173`:
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173`
+    - artifacts in `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-20T20-00-35-971Z`
+- 2026-02-20 20:08: snake shadow/depth/icon polish
+  - Removed extra ellipse shadow from snake hazards; snake now uses only its baked sprite shadow/transparency.
+  - Increased hazard layering so obstacle bodies/shadows render above Zack death pose (`HAZARD_BODY_DEPTH`, `HAZARD_SHADOW_DEPTH`).
+  - Updated failed-state snake behavior: non-killer snakes that pass dead Zack now pause for a bite, then continue moving left.
+  - Added body shudder/jolt on each failed-state snake bite (including passer bites).
+  - Added generated app icons and favicon from Zack assets:
+    - `/Users/marc/src/zachgame1/assets/icons/favicon.ico`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-192.png`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-512.png`
+  - Added web app manifest `/Users/marc/src/zachgame1/site.webmanifest` and linked favicon/manifest tags in `/Users/marc/src/zachgame1/index.html`.
+  - Build/cache bump: `2026-02-20-2010` / `20260220-2010`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - artifacts: /Users/marc/src/zachgame1/output/playwright-tests-2026-02-20T20-08-37-179Z
+- 2026-02-20 20:22: combo jump + giant tumbleweed + iPhone interaction polish
+  - Added crouch-then-jump combo move: if crouch is followed immediately by jump, Zack performs a much higher jump.
+  - Added occasional giant tumbleweeds (`requiresHighJump`) that need the combo jump clearance.
+  - Added deterministic test for combo jump height + big tumbleweed spawn in `/Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`.
+  - Updated mobile interaction behavior:
+    - Added double-tap on either side to toggle autoplay.
+    - Added mobile immersive attempt on run start (fullscreen + landscape lock where supported).
+    - Added rotate overlay for portrait orientation on iPhone/touch devices.
+    - Added explicit audio unlock/resume on touch/pointer/mouse gestures to improve iPhone music start reliability.
+  - Updated snake fail behavior: passing snakes pause to bite dead Zack, then continue left; bite triggers body shudder.
+  - Removed extra synthetic snake shadow and retained baked sprite shadow/transparency.
+  - Added favicon + webapp icons and manifest:
+    - `/Users/marc/src/zachgame1/assets/icons/favicon.ico`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-192.png`
+    - `/Users/marc/src/zachgame1/assets/icons/icon-512.png`
+    - `/Users/marc/src/zachgame1/site.webmanifest`
+  - Build/cache bump: `2026-02-20-2032` / `20260220-2032`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+- 2026-02-20 20:39: combo-jump reliability hardening
+  - Combo jump trigger widened and made reliable independent of obstacle context.
+  - Added explicit constants for jump velocities and combo timing window:
+    - `COMBO_JUMP_WINDOW_SECONDS = 0.45`
+    - `NORMAL_JUMP_VELOCITY = -980`
+    - `AUTO_JUMP_VELOCITY = -1160`
+    - `COMBO_JUMP_VELOCITY = -1520`
+  - Combo now triggers when crouching or just-released crouch buffer is active on ground.
+  - Build/cache bump: `2026-02-20-2038` / `20260220-2038`.
+  - Measured jump apex via test API (10 trials each):
+    - normal: `y=471`
+    - combo: `y=206`
+    - confirms substantially higher combo jump every trial.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `node --check /Users/marc/src/zachgame1/scripts/playwright-game-tests.mjs`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+- 2026-02-20 20:54: iPhone fullscreen/audio hardening + tuned combo jump height
+  - Reduced combo jump height from very high while keeping clear separation from normal jump (`COMBO_JUMP_VELOCITY` now `-1420`).
+  - Added iOS web app metadata in `/Users/marc/src/zachgame1/index.html` (`apple-mobile-web-app-capable`, status bar style, title, theme color).
+  - Updated `/Users/marc/src/zachgame1/site.webmanifest` for fullscreen landscape launch intent:
+    - `display: fullscreen`
+    - `display_override: ["fullscreen", "standalone"]`
+    - `orientation: landscape`
+    - `start_url: /?source=pwa`
+  - Improved mobile audio unlock reliability:
+    - audio context prime step on successful gesture resume
+    - kept unlock path on pointer/touch/mousedown
+    - removed blocking await on mobile immersive request before starting run/music
+  - Added standalone/Home Screen guidance text in rotate overlay for touch devices not launched in standalone display mode.
+  - Build/cache bump: `2026-02-20-2054` / `20260220-2054`.
+  - Validation:
+    - `node --check /Users/marc/src/zachgame1/phaser-game.js`
+    - `python3 -m json.tool /Users/marc/src/zachgame1/site.webmanifest`
+    - `/Users/marc/src/zachgame1/scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - jump apex sample via test API: normal `y=471`, combo `y=264`
+- 2026-02-21 22:10: eagle fail-peck reliability + altitude variance + autoplay diagnostics
+  - Root cause found for "only first eagle pecks": in `updateEagleFailPass`, peck-enabled eagles with empty phase were falling through to `climb` before reaching the dive/glide trigger window; fixed by adding a pre-swoop cruise branch.
+  - Added deterministic subsequent peck cadence for fail-state eagles (~30%) with guaranteed first peck on all fail reasons (including non-eagle deaths).
+  - Added alternating peck approach styles for subsequent pecks so glide-down pecks are guaranteed to appear in-session (`dive` + `glide`).
+  - Added running eagle altitude bands + action lanes:
+    - low band: jump-over eagles
+    - mid/high bands: predominantly duck eagles
+    - per-band bob amplitude to make flight heights visibly distinct.
+  - Added eagle collision/action updates:
+    - low/jump eagles can be cleared by a normal jump threshold (`EAGLE_JUMP_CLEARANCE`).
+    - autoplay now triggers non-combo eagle jumps directly (not only combo-armed jumps).
+  - Added autoplay failure diagnostics capture when auto dies:
+    - new `autoDebug.lastFailure` payload (player state, input, hit hazard, nearby hazards, fail context, last auto decision)
+    - logged as `auto-fail` event and exposed in test API.
+  - Expanded test API for diagnostics and eagle introspection:
+    - `getFailEaglePassCount`, `getFailEaglePeckEvents`, `getAutoFailureDiagnostics`, `getEagleHazards`
+    - `spawnHazard` now accepts eagle overrides (`yBase`, `autoAction`, `flightBand`, `failSwoopEnabled`).
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2210`
+    - `index.html` cache-bust params updated to `20260221-2210`.
+  - Playwright suite updates:
+    - replaced old eagle fail peck test with:
+      - `eagle-flight-variety`
+      - `fail-eagle-peck-cadence` (non-eagle death; verifies repeated pecks and glide presence)
+      - `autoplay-diagnostics` (captures diagnostics when autoplay fails)
+  - Validation:
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - local persistent server `python3 -m http.server 5173 --bind 127.0.0.1`
+    - `curl -I http://127.0.0.1:5173` (200 OK)
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` (all PASS)
+    - artifacts: `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-21T00-32-11-251Z`
+- 2026-02-21 22:35: fail wind audio + iPhone audio-unlock hardening
+  - Added fail-state irregular forelorn wind whistle layer in WebAudio:
+    - `startFailWind`, `stopFailWind`, `playFailWindWhistle`, randomized whistle timing/envelope/pitch/pan.
+    - Wind starts on death (`fail()`) and stops on restart/menu/shutdown.
+  - Increased whistle audibility and trigger behavior:
+    - immediate whistle on fail-start plus ongoing irregular whistles.
+  - Hardened iPhone audio unlock path:
+    - added resume retry loop in `unlockAudioFromGesture` with diagnostics capture (`audioUnlockAttempts/successes/failures/lastError`).
+    - if audio remains blocked shortly after run start on touch devices, status guidance is shown.
+    - unmuting during fail now re-arms wind sound immediately.
+  - Added audio diagnostics exposure:
+    - `render_game_to_text` now includes audio state (context state, muted, timers, unlock counters/errors).
+    - test API now exposes `getAudioDiagnostics()` and `forceAudioUnlock()`.
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2235`
+    - `index.html` cache-bust query updated to `20260221-2235`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+    - latest artifacts: `/Users/marc/src/zachgame1/output/playwright-tests-2026-02-21T00-52-39-234Z`
+    - fail scenario state confirms wind+audio runtime flags active:
+      - `audio.contextState = running`
+      - `audio.failWindActive = true`
+      - `build = 2026-02-21-2235`
+- 2026-02-21 22:46: dead-state MP3 desert loop integration
+  - Wired fail-state ambient to use user-provided MP3 loop:
+    - `/assets/world/tanweraman-desert-wind-1-350398.mp3`
+  - Added `ensureFailWindTrack()` and playback lifecycle:
+    - loop while `mode=failed`
+    - pause/reset on restart/menu/shutdown
+    - preserves existing synthesized whistle as fallback if track playback fails.
+  - Added diagnostics fields for wind-track status/errors in state/test API:
+    - `failWindUsingTrack`, `failWindTrackReady`, `failWindTrackPaused`, `lastFailWindError`
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2246`
+    - `index.html` cache-bust query updated to `20260221-2246`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+- 2026-02-21 22:54: iPhone pre-death WebAudio reliability + MP3 range support
+  - Addressed pre-death generated-audio silence concerns:
+    - added broader global gesture unlock listeners (`pointerdown`/`touchend`/`click`) in addition to game-wrap listeners.
+    - on `pageshow`/`visibilitychange` return, app now retries audio unlock/resume.
+    - increased music/sfx gain slightly for better audibility on iPhone speakers.
+  - Added MP3 byte-range handling in Worker for iOS Safari compatibility:
+    - `worker.js` now parses `Range: bytes=...` and returns `206 Partial Content` with `Content-Range` + `Accept-Ranges: bytes` for MP3 requests.
+  - Build/cache bump:
+    - `BUILD_ID = 2026-02-21-2254`
+    - cache-bust query in `index.html` updated to `20260221-2254`.
+  - Validation:
+    - `curl -I http://127.0.0.1:5173` => `200 OK`
+    - `node --check phaser-game.js`
+    - `node --check scripts/playwright-game-tests.mjs`
+    - `node --check worker.js`
+    - `./scripts/run-playwright-game-tests.sh http://127.0.0.1:5173` => all PASS
+    - deployed MP3 currently observed as `200` for range request before this worker patch; patch now adds explicit `206` handling.
+- 2026-03-14 19:03: rock arch asset swap follow-up
+  - using `/assets/world/newarch.png` for the rock arch sprite.
+  - increased arch visual size and tightened collision so only ducking on ground or a sufficiently high combo jump clears it.
+  - regenerated `rock_arch_shadow.png` from the new transparent arch asset.
+  - updated Playwright rock-arch scenario to trigger combo jump deterministically via `window.__zackTest.comboJump()` instead of flaky timed touch input.
+- 2026-03-14 19:10: rock arch collision tuning completed
+  - converted rock arch collision from full-width overlap to a roof-zone overlap with horizontal inset.
+  - combo jump now latches clearance once Zack is high enough over the roof, preventing false failures on the back edge during descent.
+  - full Playwright scenario suite passes on local server after this change.

@@ -1,0 +1,9 @@
+.git
+.gitignore
+.wrangler
+.codex
+docs
+output
+AGENTS.md
+README.md
+progress.md
